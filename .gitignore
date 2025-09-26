@@ -1,0 +1,29 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build artefacts
+build/
+dist/
+.parcel-cache/
+.turbo/
+.next/
+coverage/
+logs/
+*.log
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS / Editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Docker
+docker-data/
