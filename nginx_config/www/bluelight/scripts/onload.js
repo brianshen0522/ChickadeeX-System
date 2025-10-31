@@ -189,7 +189,39 @@ function load_WebImg() {
     }
   }
   var webimgurl = getQueryVariable_WebImg("webimgurl");
-  if (webimgurl) loadPicture(webimgurl);
+  if (webimgurl) {
+    try {
+      loadPicture(decodeURIComponent(webimgurl));
+    } catch (e) {
+      console.error('Failed to load image via webimgurl:', e);
+      loadPicture(webimgurl);
+    }
+  }
+}
+
+function load_CustomUpload() {
+  var params = new URLSearchParams(window.location.search);
+  var dicomUrl = params.get('dicomurl');
+  var imageUrl = params.get('imageurl');
+
+  if (imageUrl && !params.get('webimgurl')) {
+    try {
+      loadPicture(decodeURIComponent(imageUrl));
+    } catch (e) {
+      console.error('Failed to decode imageurl parameter:', e);
+      loadPicture(imageUrl);
+    }
+  }
+
+  if (dicomUrl) {
+    try {
+      const decoded = decodeURIComponent(dicomUrl);
+      loadDICOMFromUrl(decoded);
+    } catch (e) {
+      console.error('Failed to decode dicomurl parameter:', e);
+      loadDICOMFromUrl(dicomUrl);
+    }
+  }
 }
 
 function readAllJson(readJson) {
@@ -202,6 +234,7 @@ function readAllJson(readJson) {
     readJson(url);
   }
   load_WebImg();
+  load_CustomUpload();
 }
 
 function fitUrl(url) {

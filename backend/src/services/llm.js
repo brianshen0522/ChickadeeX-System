@@ -357,5 +357,6 @@ Rules:
 };
 
 module.exports = {
-    generateAIReport
+    generateAIReport,
+    callLLM
 };

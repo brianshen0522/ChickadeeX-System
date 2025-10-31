@@ -717,8 +717,16 @@ router.get('/statistics', async (req, res) => {
     try {
         const db = getDB();
         
-        const stats = await Promise.all([
-            // Total users by role
+        const [
+            usersByRoleRes,
+            totalReportsRes,
+            finalizedReportsRes,
+            recentActivityRes,
+            userStatusRes,
+            llmBreakdownRes,
+            systemSettingsRes
+        ] = await Promise.all([
+            // Total users by role (active users only for parity with dashboard)
             db.query(`
                 SELECT r.name as role, COUNT(u.id) as count
                 FROM roles r
@@ -726,24 +734,36 @@ router.get('/statistics', async (req, res) => {
                 GROUP BY r.id, r.name
                 ORDER BY r.name
             `),
-            
             // Total reports
-            db.query('SELECT COUNT(*) as total_reports FROM reports'),
-            
+            db.query('SELECT COUNT(*)::int as total_reports FROM reports'),
             // Finalized reports
-            db.query('SELECT COUNT(*) as finalized_reports FROM reports WHERE finalized_at IS NOT NULL'),
-            
-            // LLM configs (enabled)
-            db.query('SELECT COUNT(*) as llm_count FROM llm_configs WHERE enabled = true'),
-
+            db.query('SELECT COUNT(*)::int as finalized_reports FROM reports WHERE finalized_at IS NOT NULL'),
             // Recent activity (last 7 days)
             db.query(`
-                SELECT DATE(timestamp) as date, COUNT(*) as activities
+                SELECT DATE(timestamp) as date, COUNT(*)::int as activities
                 FROM audit_logs
                 WHERE timestamp >= CURRENT_DATE - INTERVAL '7 days'
                 GROUP BY DATE(timestamp)
                 ORDER BY date DESC
-            `)
+            `),
+            // User activity status breakdown
+            db.query(`
+                SELECT 
+                    COUNT(*)::int AS total_users,
+                    COUNT(*) FILTER (WHERE is_active = true)::int AS active_users,
+                    COUNT(*) FILTER (WHERE is_active = false)::int AS inactive_users
+                FROM users
+            `),
+            // LLM enabled/disabled breakdown
+            db.query(`
+                SELECT 
+                    COUNT(*)::int AS total_llms,
+                    COUNT(*) FILTER (WHERE enabled = true)::int AS enabled_llms,
+                    COUNT(*) FILTER (WHERE enabled = false)::int AS disabled_llms
+                FROM llm_configs
+            `),
+            // Current system settings snapshot
+            db.query('SELECT system_name, max_concurrent_tasks, backup_frequency FROM system_settings LIMIT 1')
         ]);
 
         // PACS health check
@@ -773,19 +793,33 @@ router.get('/statistics', async (req, res) => {
             pacsHealthy = false;
         }
 
-        const totalReports = parseInt(stats[1].rows[0].total_reports);
-        const finalizedReports = parseInt(stats[2].rows[0].finalized_reports);
+        const toNumber = (value) => Number(value) || 0;
+
+        const totalReports = toNumber(totalReportsRes.rows[0]?.total_reports);
+        const finalizedReports = toNumber(finalizedReportsRes.rows[0]?.finalized_reports);
         const draftReports = Math.max(0, totalReports - finalizedReports);
-        const llmCount = parseInt(stats[3].rows[0].llm_count);
+        const userCountsRow = userStatusRes.rows[0] || {};
+        const llmCountsRow = llmBreakdownRes.rows[0] || {};
 
         res.json({
-            users_by_role: stats[0].rows,
+            users_by_role: usersByRoleRes.rows,
             total_reports: totalReports,
             finalized_reports: finalizedReports,
             draft_reports: draftReports,
-            llm_count: llmCount,
+            llm_count: toNumber(llmCountsRow.enabled_llms),
+            user_counts: {
+                total: toNumber(userCountsRow.total_users),
+                active: toNumber(userCountsRow.active_users),
+                inactive: toNumber(userCountsRow.inactive_users)
+            },
+            llm_counts: {
+                total: toNumber(llmCountsRow.total_llms),
+                enabled: toNumber(llmCountsRow.enabled_llms),
+                disabled: toNumber(llmCountsRow.disabled_llms)
+            },
+            system_settings: systemSettingsRes.rows[0] || null,
             pacs_healthy: pacsHealthy,
-            recent_activity: stats[4].rows
+            recent_activity: recentActivityRes.rows
         });
     } catch (error) {
         logger.error('Get statistics error:', error);

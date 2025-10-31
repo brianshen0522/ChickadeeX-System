@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getReports } from '../services/reportService';
-import { Search, Filter, Eye, Download, CheckCircle, Clock, User, Calendar, FileText, X, BarChart3, Activity, Shield } from 'lucide-react';
+import { Search, Filter, Eye, Download, CheckCircle, Clock, User, FileText, X, BarChart3, Activity } from 'lucide-react';
 import { format } from 'date-fns';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -10,7 +10,9 @@ import { usePageContext } from '../contexts/PageContext';
 
 const ReportsPage = () => {
   const { user } = useAuth();
-  const { setPageTitle, setPageDescription } = usePageContext();
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState({
@@ -21,7 +23,8 @@ const ReportsPage = () => {
     report_date_to: '',
     modality: '',
     status: 'all',
-    finalized_only: false
+    finalized_only: false,
+    draft_only: false
   });
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
   const [pagination, setPagination] = useState({
@@ -30,16 +33,9 @@ const ReportsPage = () => {
     total: 0
   });
 
-  // Initialize page title
   useEffect(() => {
-    setPageTitle('Medical Reports');
-  }, [setPageTitle]);
-
-  useEffect(() => {
-    // Derive defaults from role when user becomes available
     if (!user) return;
     const isRO = user.role === 'researcher' || user.role === 'observer';
-    // Put the role-specific context on the top nav bar (right side)
     const desc = user.role === 'doctor'
       ? 'Create, edit, and manage medical imaging reports.'
       : user.role === 'researcher'
@@ -48,17 +44,72 @@ const ReportsPage = () => {
           ? 'View finalized medical imaging reports.'
           : 'View and manage all medical reports.';
     setPageDescription(desc);
-    setFilters((prev) => ({
-      ...prev,
-      status: isRO ? 'finalized' : 'all',
-      finalized_only: isRO
-    }));
-  }, [user]);
+
+    const isLanding = location.pathname === '/reports';
+    const isDraftView = location.pathname === '/reports/draft';
+    const isDetailView = /^\/reports\/[0-9a-fA-F-]+$/.test(location.pathname);
+
+    if (isRO && !isDetailView && isLanding) {
+      navigate('/reports/finalized', { replace: true });
+    }
+  }, [location.pathname, navigate, setPageDescription, user]);
+
+  useEffect(() => {
+    const pathStatus = (() => {
+      if (location.pathname.startsWith('/reports/draft')) return 'draft';
+      if (location.pathname.startsWith('/reports/finalized')) return 'finalized';
+      return 'all';
+    })();
+
+    if (filters.status !== pathStatus || filters.finalized_only || filters.draft_only) {
+      setFilters((prev) => ({
+        ...prev,
+        status: pathStatus,
+        finalized_only: false,
+        draft_only: false
+      }));
+      if (filters.status !== pathStatus) {
+        setPagination((prev) => ({ ...prev, offset: 0 }));
+      }
+    }
+  }, [filters.draft_only, filters.finalized_only, filters.status, location.pathname]);
+
+  useEffect(() => {
+    const title = (() => {
+      switch (filters.status) {
+        case 'draft':
+          return 'Draft Reports';
+        case 'finalized':
+          return 'Finalized Reports';
+        default:
+          return 'All Reports';
+      }
+    })();
+
+    setPageTitle(title);
+    setBreadcrumbs([
+      { label: 'Home', href: '/' },
+      { label: 'Reports', href: '/reports' },
+      { label: title, href: undefined, isCurrent: true }
+    ]);
+  }, [filters.status, setBreadcrumbs, setPageTitle]);
 
   // Fetch whenever filters or pagination change
   useEffect(() => {
     fetchReports();
   }, [filters, pagination.offset]);
+
+  const formatDisplayDate = (value, pattern = 'MMM dd') => {
+    if (!value) return '—';
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '—';
+    try {
+      return format(date, pattern);
+    } catch (error) {
+      console.warn('Failed to format date value', value, error);
+      return '—';
+    }
+  };
 
   const fetchReports = async () => {
     setLoading(true);
@@ -68,21 +119,8 @@ const ReportsPage = () => {
         limit: pagination.limit,
         offset: pagination.offset
       };
-      
-      // Convert status filter to backend flags
-      if (params.status === 'finalized') {
-        params.finalized_only = true;
-        delete params.draft_only;
-      } else if (params.status === 'draft') {
-        params.draft_only = true;
-        delete params.finalized_only;
-      } else {
-        // For 'all', avoid sending either flag
-        delete params.finalized_only;
-        delete params.draft_only;
-      }
-      // Remove status from params as backend doesn't use it
-      delete params.status;
+      delete params.finalized_only;
+      delete params.draft_only;
       
       // Remove empty filters
       Object.keys(params).forEach(key => {
@@ -91,9 +129,35 @@ const ReportsPage = () => {
         }
       });
 
+      if (params.status && params.status !== 'all') {
+        params.status = params.status.toLowerCase();
+      } else {
+        delete params.status;
+      }
+
       const data = await getReports(params);
-      setReports(data.reports || []);
-      setPagination(prev => ({ ...prev, total: data.pagination?.total || 0 }));
+      const payload = data.reports || [];
+      const filteredReports = (() => {
+        if (filters.status === 'draft') {
+          return payload.filter((report) => {
+            const statusValue = report.status || (report.is_finalized ? 'finalized' : 'draft');
+            return statusValue === 'draft';
+          });
+        }
+        if (filters.status === 'finalized') {
+          return payload.filter((report) => {
+            const statusValue = report.status || (report.is_finalized ? 'finalized' : 'draft');
+            return statusValue === 'finalized' || statusValue === 'completed';
+          });
+        }
+        return payload;
+      })();
+
+      setReports(filteredReports);
+      setPagination(prev => ({
+        ...prev,
+        total: data.pagination?.total ?? filteredReports.length
+      }));
     } catch (error) {
       console.error('Fetch reports error:', error);
       toast.error('Failed to load reports');
@@ -103,8 +167,22 @@ const ReportsPage = () => {
   };
 
   const handleFilterChange = (field, value) => {
-    setFilters(prev => ({ ...prev, [field]: value }));
+    setFilters(prev => ({
+      ...prev,
+      [field]: value,
+      ...(field === 'status' ? { finalized_only: false, draft_only: false } : {})
+    }));
     setPagination(prev => ({ ...prev, offset: 0 })); // Reset to first page
+
+    if (field === 'status') {
+      if (value === 'draft') {
+        navigate('/reports/draft', { replace: true });
+      } else if (value === 'finalized') {
+        navigate('/reports/finalized', { replace: true });
+      } else {
+        navigate('/reports', { replace: true });
+      }
+    }
   };
 
   const handlePageChange = (newOffset) => {
@@ -113,28 +191,47 @@ const ReportsPage = () => {
 
   const canCreateReports = false; // Create Report disabled per project scope
   const canExport = ['doctor', 'researcher'].includes(user?.role);
+  const statusLabelMap = {
+    all: 'All Reports',
+    draft: 'Draft Reports',
+    finalized: 'Finalized Reports'
+  };
+  const activeStatusLabel = statusLabelMap[filters.status] || 'All Reports';
 
   return (
-    <div className="flex flex-col h-full space-y-6">
-      {/* Minimal Header */}
-      <div className="flex justify-between items-center mb-3">
-        <h1 className="text-lg font-semibold text-gray-900">Reports</h1>
-        
-        <div className="flex items-center space-x-3 text-xs">
-          <span className="text-gray-600">{pagination.total} total</span>
-          <span className="text-green-600">{reports.filter(r => r.is_finalized).length} completed</span>
-          <span className="text-yellow-600">{reports.filter(r => !r.is_finalized).length} pending</span>
+    <div className="flex flex-col h-full space-y-4">
+      {/* Compact Header Summary */}
+      <div className="flex flex-col gap-2 text-[0.75rem] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2">
+          <span className="uppercase tracking-[0.2em] text-[0.65rem] font-semibold text-rose-500">Report Summary</span>
+          <span className="inline-flex items-center rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[0.6rem] font-semibold uppercase tracking-widest text-slate-600">
+            {activeStatusLabel}
+          </span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+          <span className="inline-flex items-center gap-1 text-slate-600">
+            <BarChart3 className="h-3.5 w-3.5 text-slate-400" />
+            {pagination.total} total
+          </span>
+          <span className="inline-flex items-center gap-1 text-success-600">
+            <CheckCircle className="h-3.5 w-3.5" />
+            {reports.filter(r => r.is_finalized).length} finalized
+          </span>
+          <span className="inline-flex items-center gap-1 text-warning-600">
+            <Clock className="h-3.5 w-3.5" />
+            {reports.filter(r => !r.is_finalized).length} drafts
+          </span>
         </div>
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white border border-gray-200 rounded-lg p-3 flex-shrink-0">
-        <div className="flex gap-2 items-center">
+      <div className="bg-white border border-gray-200 rounded-lg p-2.5 flex-shrink-0">
+        <div className="flex items-center gap-1.5">
           <div className="flex-1 relative">
             <User className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
             <input
               type="text"
-              className="w-full pl-9 pr-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+              className="w-full pl-9 pr-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
               placeholder="Search patient..."
               value={filters.patient_name || filters.patient_id}
               onChange={(e) => {
@@ -148,18 +245,6 @@ const ReportsPage = () => {
               }}
             />
           </div>
-          
-          {['admin', 'doctor'].includes(user?.role) && (
-            <select
-              className="px-3 py-2 border border-gray-200 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-              value={filters.status}
-              onChange={(e) => handleFilterChange('status', e.target.value)}
-            >
-              <option value="all">All</option>
-              <option value="draft">Draft</option>
-              <option value="finalized">Final</option>
-            </select>
-          )}
           
           <button
             onClick={fetchReports}
@@ -232,6 +317,7 @@ const ReportsPage = () => {
             <div className="mt-3 flex justify-end">
               <button
                 onClick={() => {
+                  const defaultStatus = user?.role === 'researcher' || user?.role === 'observer' ? 'finalized' : 'all';
                   setFilters({
                     patient_id: '',
                     patient_name: '',
@@ -239,10 +325,21 @@ const ReportsPage = () => {
                     report_date_from: '',
                     report_date_to: '',
                     modality: '',
-                    status: user?.role === 'researcher' || user?.role === 'observer' ? 'finalized' : 'all',
-                    finalized_only: user?.role === 'researcher' || user?.role === 'observer'
+                    status: defaultStatus,
+                    finalized_only: false,
+                    draft_only: false
                   });
                   setPagination(prev => ({ ...prev, offset: 0 }));
+                  const params = new URLSearchParams(location.search);
+                  if (defaultStatus === 'all') {
+                    params.delete('status');
+                  } else {
+                    params.set('status', defaultStatus);
+                  }
+                  navigate({
+                    pathname: location.pathname,
+                    search: params.toString() ? `?${params.toString()}` : ''
+                  }, { replace: true });
                 }}
                 className="inline-flex items-center px-2 py-1 text-xs font-medium text-gray-700 bg-gray-100 rounded hover:bg-gray-200 focus:outline-none focus:ring-1 focus:ring-gray-500 transition-colors"
               >
@@ -253,56 +350,6 @@ const ReportsPage = () => {
           </div>
         )}
       </div>
-
-      {(filters.patient_name || filters.patient_id || filters.modality || filters.report_date_from || filters.report_date_to || filters.study_instance_uid || (filters.status !== 'all' && ['admin', 'doctor'].includes(user?.role))) && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-2 flex-shrink-0">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <Filter className="h-3 w-3 text-blue-600" />
-              <div className="flex flex-wrap items-center gap-1 text-xs">
-                {(filters.patient_name || filters.patient_id) && (
-                  <span className="bg-blue-100 px-2 py-1 rounded text-blue-700">
-                    {filters.patient_name || filters.patient_id}
-                  </span>
-                )}
-                {filters.modality && (
-                  <span className="bg-blue-100 px-2 py-1 rounded text-blue-700">
-                    {filters.modality}
-                  </span>
-                )}
-                {filters.status !== 'all' && ['admin', 'doctor'].includes(user?.role) && (
-                  <span className="bg-blue-100 px-2 py-1 rounded text-blue-700">
-                    {filters.status === 'finalized' ? 'Final' : 'Draft'}
-                  </span>
-                )}
-                {(filters.report_date_from || filters.report_date_to) && (
-                  <span className="bg-blue-100 px-2 py-1 rounded text-blue-700">
-                    Date filtered
-                  </span>
-                )}
-              </div>
-            </div>
-            <button
-              onClick={() => {
-                setFilters({
-                  patient_id: '',
-                  patient_name: '',
-                  study_instance_uid: '',
-                  report_date_from: '',
-                  report_date_to: '',
-                  modality: '',
-                  status: user?.role === 'researcher' || user?.role === 'observer' ? 'finalized' : 'all',
-                  finalized_only: user?.role === 'researcher' || user?.role === 'observer'
-                });
-                setPagination(prev => ({ ...prev, offset: 0 }));
-              }}
-              className="text-xs text-blue-700 hover:text-blue-800 px-1 py-0.5 rounded hover:bg-blue-100 transition-colors"
-            >
-              ✕
-            </button>
-          </div>
-        </div>
-      )}
 
       {/* Reports List */}
       <div className="bg-white border border-gray-200 rounded-lg flex-1 flex flex-col min-h-0 overflow-hidden">
@@ -323,91 +370,110 @@ const ReportsPage = () => {
         ) : (
           <div className="flex-1 overflow-y-auto">
             <div className="p-4">
-              <div className="space-y-3">
-                {reports.map((report) => (
-                  <div key={report.id} className="border border-gray-200 rounded-lg p-4 hover:border-blue-200 transition-colors bg-white">
-                    <div className="flex items-start justify-between">
-                      <div className="flex items-start space-x-4 flex-1">
-                        {/* Status Icon */}
-                        <div className={`flex-shrink-0 h-8 w-8 rounded-lg flex items-center justify-center ${
-                          report.is_finalized 
-                            ? 'bg-green-100 text-green-600' 
-                            : 'bg-yellow-100 text-yellow-600'
-                        }`}>
-                          {report.is_finalized ? (
-                            <CheckCircle className="h-4 w-4" />
-                          ) : (
-                            <Clock className="h-4 w-4" />
-                          )}
-                        </div>
-                        
-                        {/* Report Info */}
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center space-x-3 mb-2">
-                            <h3 className="text-base font-semibold text-gray-900 truncate">
-                              {report.patient_name || `Patient ${report.patient_id}`}
-                            </h3>
-                            <span className={`text-xs font-medium ${
-                              report.is_finalized ? 'text-green-600' : 'text-yellow-600'
-                            }`}>
-                              {report.is_finalized ? 'Completed' : 'In Progress'}
-                            </span>
+              <div className="space-y-3 sm:space-y-2.5">
+                {reports.map((report) => {
+                  const statusValue = report.status || (report.is_finalized ? 'finalized' : 'draft');
+                  const isFinalized = statusValue === 'finalized' || statusValue === 'completed' || report.is_finalized;
+                  const reportTitle = report.title || report.patient_name || (report.patient_id ? `Patient ${report.patient_id}` : 'Report');
+                  const patientIdentifier = report.patient_id || '—';
+                  const truncatedPatientId = patientIdentifier.length > 12 ? `${patientIdentifier.substring(0, 12)}...` : patientIdentifier;
+                  const reportDescription = report.description ?? report.study_description ?? '';
+
+                  return (
+                    <div
+                      key={report.id}
+                      className="border border-gray-200 rounded-md px-3.5 py-2.5 hover:border-blue-200 transition-colors bg-white shadow-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 flex-1 min-w-0">
+                          <div
+                            className={`flex-shrink-0 h-7 w-7 rounded-md flex items-center justify-center ${
+                              isFinalized ? 'bg-green-100 text-green-600' : 'bg-yellow-100 text-yellow-600'
+                            }`}
+                            aria-hidden="true"
+                          >
+                            {isFinalized ? <CheckCircle className="h-4 w-4" /> : <Clock className="h-4 w-4" />}
                           </div>
-                          
-                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
-                            <div>
-                              <span className="text-gray-500 text-xs">Modality</span>
-                              <div className="font-medium text-gray-900">{report.modality}</div>
+
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <h3 className="text-sm font-semibold text-gray-900 truncate">
+                                {reportTitle}
+                              </h3>
+                              <span
+                                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[0.65rem] font-semibold tracking-wide ${
+                                  isFinalized ? 'bg-green-50 text-green-600' : 'bg-yellow-50 text-yellow-600'
+                                }`}
+                              >
+                                {isFinalized ? 'Completed' : 'In Progress'}
+                              </span>
                             </div>
-                            <div>
-                              <span className="text-gray-500 text-xs">Patient ID</span>
-                              <div className="font-mono text-gray-900 text-xs">
-                                {report.patient_id.length > 12 ? `${report.patient_id.substring(0, 12)}...` : report.patient_id}
+
+                            <div className="mt-1">
+                              <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-2 sm:items-center">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-medium text-gray-500">Modality</span>
+                                  <span className="text-gray-800">{report.modality || '—'}</span>
+                                  <span className="text-gray-300">•</span>
+                                  <span className="font-medium text-gray-500">Patient</span>
+                                  <span className="font-mono text-gray-800">{truncatedPatientId}</span>
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2 justify-start sm:justify-end text-gray-500">
+                                  <span className="font-medium">Created</span>
+                                  <span className="text-gray-800">
+                                    {formatDisplayDate(report.created_at)}
+                                  </span>
+                                  {report.updated_at && (
+                                    <>
+                                      <span className="text-gray-300">•</span>
+                                      <span className="font-medium">Updated</span>
+                                      <span className="text-gray-800">
+                                        {formatDisplayDate(report.updated_at)}
+                                      </span>
+                                    </>
+                                  )}
+                                </div>
                               </div>
                             </div>
-                            {report.study_date && (
-                              <div>
-                                <span className="text-gray-500 text-xs">Study Date</span>
-                                <div className="font-medium text-gray-900">{format(new Date(report.study_date), 'MMM dd')}</div>
+
+                            {reportDescription && (
+                              <div className="mt-1 text-xs text-gray-600">
+                                <p
+                                  className="line-clamp-1"
+                                  title={reportDescription}
+                                >
+                                  {reportDescription}
+                                </p>
                               </div>
                             )}
-                            <div>
-                              <span className="text-gray-500 text-xs">Created</span>
-                              <div className="font-medium text-gray-900">{format(new Date(report.created_at), 'MMM dd')}</div>
-                            </div>
                           </div>
-                          
-                          {report.study_description && (
-                            <div className="mt-2">
-                              <span className="text-xs text-gray-500">Description: </span>
-                              <span className="text-sm text-gray-700">{report.study_description.length > 60 ? `${report.study_description.substring(0, 60)}...` : report.study_description}</span>
-                            </div>
+                        </div>
+
+                        <div className="flex flex-shrink-0 items-center justify-end gap-2 sm:gap-3">
+                          <Link
+                            to={`/reports/${report.id}`}
+                            className="flex h-9 w-9 items-center justify-center rounded-md border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors leading-none"
+                            aria-label="View report"
+                            title="View report"
+                          >
+                            <Eye className="h-4 w-4" />
+                            <span className="sr-only">View</span>
+                          </Link>
+
+                          {canExport && isFinalized && (
+                            <button
+                              onClick={() => toast.success('Export feature will be implemented')}
+                              className="hidden h-9 shrink-0 items-center rounded-md border border-gray-200 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 sm:flex"
+                            >
+                              <Download className="mr-1 h-3.5 w-3.5" />
+                              Export
+                            </button>
                           )}
                         </div>
                       </div>
-                      
-                      {/* Actions */}
-                      <div className="flex items-center space-x-2 ml-4">
-                        <Link
-                          to={`/reports/${report.id}`}
-                          className="inline-flex items-center px-3 py-1.5 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-                        >
-                          <Eye className="h-4 w-4 mr-1.5" />
-                          View
-                        </Link>
-                        
-                        {canExport && report.is_finalized && (
-                          <button
-                            onClick={() => toast.success('Export feature will be implemented')}
-                            className="inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
-                          >
-                            <Download className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </div>

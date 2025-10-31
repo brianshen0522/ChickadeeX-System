@@ -1,6 +1,6 @@
 logrotate state -- version 2
 "/var/log/acpid.log" 2025-8-31-2:0:0
-"/config/log/nginx/access.log" 2025-9-28-2:2:4
+"/config/log/nginx/access.log" 2025-10-25-2:17:55
 "/var/log/php84/*.log" 2025-8-31-2:0:0
 "/config/log/nginx/error.log" 2025-9-22-2:44:5
-"/config/log/php/error.log" 2025-9-28-2:2:4
+"/config/log/php/error.log" 2025-10-25-2:17:55

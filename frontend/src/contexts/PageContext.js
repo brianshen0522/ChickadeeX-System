@@ -13,10 +13,12 @@ export const usePageContext = () => {
 export const PageProvider = ({ children }) => {
   const [pageTitle, setPageTitle] = useState('');
   const [pageDescription, setPageDescription] = useState('');
+  const [breadcrumbs, setBreadcrumbs] = useState([]);
 
   const clearPageData = () => {
     setPageTitle('');
     setPageDescription('');
+    setBreadcrumbs([]);
   };
 
   return (
@@ -25,6 +27,8 @@ export const PageProvider = ({ children }) => {
       setPageTitle, 
       pageDescription, 
       setPageDescription,
+      breadcrumbs,
+      setBreadcrumbs,
       clearPageData 
     }}>
       {children}

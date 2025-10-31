@@ -1,428 +1,357 @@
-import { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { getReports, getReportsStats } from '../services/reportService';
-import { getStatistics, getUserStats } from '../services/adminService';
-import { getStudiesStats } from '../services/dicomService';
-import { FileText, Clock, CheckCircle, Users, BarChart3, FolderOpen, TrendingUp, Activity, Shield, Calendar } from 'lucide-react';
-import LoadingSpinner from '../components/UI/LoadingSpinner';
 import { usePageContext } from '../contexts/PageContext';
+import {
+  FileText,
+  FolderOpen,
+  Activity,
+  Users,
+  Cpu,
+  Database,
+  Shield,
+  Settings2,
+  UserCircle,
+  Sparkles,
+  ArrowRight,
+  CheckCircle,
+  Clock
+} from 'lucide-react';
+import { getStatistics, getUserStats } from '../services/adminService';
+import { getReportsStats } from '../services/reportService';
+import { getStudiesStats } from '../services/dicomService';
 
 const DashboardPage = () => {
   const { user } = useAuth();
   const { setPageTitle, setPageDescription } = usePageContext();
-  const [recentReports, setRecentReports] = useState([]);
-  const [statistics, setStatistics] = useState(null);
-  const [userStats, setUserStats] = useState(null);
-  const [doctorStats, setDoctorStats] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [adminMetrics, setAdminMetrics] = useState(null);
+  const [doctorMetrics, setDoctorMetrics] = useState(null);
 
   useEffect(() => {
-    setPageTitle('Dashboard');
-    setPageDescription(''); // Clear description for dashboard
-    fetchDashboardData();
-  }, [setPageTitle, setPageDescription]);
+    setPageTitle('Home');
+    setPageDescription('');
+  }, [setPageDescription, setPageTitle]);
 
-  // Add a refresh function for external use
-  const refreshDashboard = () => {
-    fetchDashboardData();
-  };
+  const role = user?.role;
+  const shouldShowMetrics = role === 'admin' || role === 'doctor';
 
-  // Listen for dashboard refresh events
   useEffect(() => {
-    const handleDashboardRefresh = () => {
-      fetchDashboardData();
+    let isMounted = true;
+
+    const loadMetrics = async () => {
+      if (!role || !['admin', 'doctor'].includes(role)) {
+        setAdminMetrics(null);
+        setDoctorMetrics(null);
+        setLoadingMetrics(false);
+        return;
+      }
+
+      setLoadingMetrics(true);
+      try {
+        if (role === 'admin') {
+          const [statsData, userData] = await Promise.all([
+            getStatistics(),
+            getUserStats()
+          ]);
+          if (isMounted) {
+            setAdminMetrics({ stats: statsData, users: userData });
+            setDoctorMetrics(null);
+          }
+        } else if (role === 'doctor') {
+          const [reportStats, studiesStats] = await Promise.all([
+            getReportsStats(),
+            getStudiesStats()
+          ]);
+          if (isMounted) {
+            setDoctorMetrics({ reportStats, studiesStats });
+            setAdminMetrics(null);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to load dashboard metrics', error);
+        if (isMounted) {
+          setAdminMetrics(null);
+          setDoctorMetrics(null);
+        }
+      } finally {
+        if (isMounted) {
+          setLoadingMetrics(false);
+        }
+      }
     };
 
-    window.addEventListener('dashboardRefresh', handleDashboardRefresh);
-    
+    loadMetrics();
     return () => {
-      window.removeEventListener('dashboardRefresh', handleDashboardRefresh);
+      isMounted = false;
     };
-  }, []);
+  }, [role]);
 
-  const fetchDashboardData = async () => {
-    try {
-      const promises = [
-        getReports({ limit: 5, offset: 0 })
-      ];
-
-      // Add admin-specific data
-      if (user?.role === 'admin') {
-        promises.push(getStatistics());
-        promises.push(getUserStats());
-      }
-
-      // Add doctor-specific data
-      if (user?.role === 'doctor') {
-        promises.push(getReportsStats());
-        promises.push(getStudiesStats());
-      }
-
-      const results = await Promise.all(promises);
-      
-      setRecentReports(results[0].reports || []);
-      
-      if (user?.role === 'admin') {
-        setStatistics(results[1]);
-        setUserStats(results[2]);
-      }
-
-      if (user?.role === 'doctor') {
-        const reportStats = results[1];
-        const studiesStats = results[2];
-        setDoctorStats({
-          ...reportStats,
-          ...studiesStats
-        });
-      }
-    } catch (error) {
-      console.error('Dashboard data fetch error:', error);
-    } finally {
-      setLoading(false);
-    }
+  const formatNumber = (value) => {
+    if (value === null || value === undefined) return '—';
+    if (typeof value === 'number') return value.toLocaleString();
+    return value;
   };
 
-  if (loading) {
-    return <LoadingSpinner />;
-  }
+  const metricCards = useMemo(() => {
+    const cards = [];
+    if (role === 'admin' && adminMetrics?.stats) {
+      const stats = adminMetrics.stats;
+      const users = adminMetrics.users;
+      cards.push({
+        title: 'Total Reports',
+        value: formatNumber(stats.total_reports),
+        icon: FileText,
+        surface: 'border-primary-100 bg-primary-50',
+        iconColor: 'text-primary-600'
+      });
+      cards.push({
+        title: 'Draft Reports',
+        value: formatNumber(stats.draft_reports),
+        icon: Clock,
+        surface: 'border-warning-100 bg-warning-50',
+        iconColor: 'text-warning-600'
+      });
+      cards.push({
+        title: 'Finalized Reports',
+        value: formatNumber(stats.finalized_reports),
+        icon: CheckCircle,
+        surface: 'border-success-100 bg-success-50',
+        iconColor: 'text-success-600'
+      });
+      cards.push({
+        title: 'System Users',
+        value: formatNumber(users?.totalUsers),
+        icon: Users,
+        surface: 'border-rose-100 bg-rose-50',
+        iconColor: 'text-rose-600',
+        breakdown: [
+          { label: 'Active', value: formatNumber(users?.activeUsers) },
+          { label: 'Inactive', value: formatNumber(users?.inactiveUsers) }
+        ]
+      });
+    }
 
-  const isDoctorOrAdmin = ['doctor', 'admin'].includes(user?.role);
+    if (role === 'doctor' && doctorMetrics?.reportStats) {
+      cards.push({
+        title: 'Finalized This Week',
+        value: formatNumber(doctorMetrics.reportStats.finalized_reports),
+        icon: CheckCircle,
+        surface: 'border-primary-100 bg-primary-50',
+        iconColor: 'text-primary-600'
+      });
+      cards.push({
+        title: 'Draft Queue',
+        value: formatNumber(doctorMetrics.reportStats.draft_reports),
+        icon: Clock,
+        surface: 'border-warning-100 bg-warning-50',
+        iconColor: 'text-warning-600'
+      });
+      cards.push({
+        title: 'Studies Viewed',
+        value: formatNumber(
+          doctorMetrics.studiesStats?.totalStudiesViewed ??
+            doctorMetrics.studiesStats?.totalStudies
+        ),
+        icon: Activity,
+        surface: 'border-success-100 bg-success-50',
+        iconColor: 'text-success-600'
+      });
+    }
+
+    return cards;
+  }, [adminMetrics, doctorMetrics, role]);
+
+  const skeletonCount = metricCards.length || (shouldShowMetrics ? 3 : 0);
+
+  const sections = useMemo(() => {
+    const baseSections = [
+      {
+        title: 'Clinical Operations',
+        items: [
+          {
+            name: 'Reports Workspace',
+            description: 'Review drafts, finalize studies, and export signed reports.',
+            icon: FileText,
+            to: '/reports',
+            cta: 'Open Reports',
+            roles: ['admin', 'doctor', 'researcher', 'observer']
+          },
+          {
+            name: 'Studies Explorer',
+            description: 'Search PACS studies with modality and date filters.',
+            icon: FolderOpen,
+            to: '/studies',
+            cta: 'Browse Studies',
+            roles: ['doctor']
+          },
+          {
+            name: 'BlueLight Viewer',
+            description: 'Launch the embedded DICOM viewer for synchronized reporting.',
+            icon: Activity,
+            to: '/bluelight',
+            cta: 'Open Viewer',
+            roles: ['doctor']
+          }
+        ]
+      },
+      {
+        title: 'Intelligence & Assistance',
+        items: [
+          {
+            name: 'AI Drafting',
+            description: 'Generate report previews with the configured language model.',
+            icon: Sparkles,
+            to: '/reports',
+            cta: 'Generate Draft',
+            roles: ['admin', 'doctor']
+          }
+        ]
+      },
+      {
+        title: 'Administration',
+        items: [
+          {
+            name: 'User Directory',
+            description: 'Manage clinical users, invites, and role assignments.',
+            icon: Users,
+            to: '/admin?tab=users',
+            cta: 'Manage Users',
+            roles: ['admin']
+          },
+          {
+            name: 'LLM Configuration',
+            description: 'Tune prompts, parameters, and model availability.',
+            icon: Cpu,
+            to: '/admin?tab=llm',
+            cta: 'Configure LLMs',
+            roles: ['admin']
+          },
+          {
+            name: 'PACS Connectivity',
+            description: 'Adjust DICOM proxy endpoints and authentication.',
+            icon: Database,
+            to: '/admin?tab=pacs',
+            cta: 'Edit PACS Settings',
+            roles: ['admin']
+          },
+          {
+            name: 'System Policies',
+            description: 'Set throttles, system names, and backup policies.',
+            icon: Shield,
+            to: '/admin?tab=system',
+            cta: 'Update Policies',
+            roles: ['admin']
+          }
+        ]
+      },
+      {
+        title: 'Account & Preferences',
+        items: [
+          {
+            name: 'Profile & Preferences',
+            description: 'Update personal details, notification settings, and credentials.',
+            icon: UserCircle,
+            to: '/profile',
+            cta: 'View Profile',
+            roles: ['admin', 'doctor', 'researcher', 'observer']
+          },
+          {
+            name: 'Support & Feedback',
+            description: 'Raise issues or request enhancements for ChickadeeX.',
+            icon: Settings2,
+            to: '/profile',
+            cta: 'Contact Support',
+            roles: ['admin', 'doctor', 'researcher', 'observer']
+          }
+        ]
+      }
+    ];
+
+    return baseSections
+      .map((section) => ({
+        ...section,
+        items: section.items.filter((item) => !item.roles || item.roles.includes(role))
+      }))
+      .filter((section) => section.items.length > 0);
+  }, [role]);
 
   return (
-    <div className="flex flex-col h-full space-y-4">
-      {/* Minimal Header with Role Indicator */}
-      <div className="flex items-center justify-between min-h-[2.5rem]">
-        <div className="flex items-center space-x-3 flex-shrink-0">
-          <div className={`inline-flex items-center px-3 py-1.5 rounded-full text-sm font-medium leading-none ${
-            user?.role === 'admin' ? 'bg-error-100 text-error-800 border border-error-200' : 
-            user?.role === 'doctor' ? 'bg-accent-teal bg-opacity-10 text-accent-teal border border-accent-teal border-opacity-20' :
-            user?.role === 'researcher' ? 'bg-success-100 text-success-800 border border-success-200' :
-            'bg-primary-100 text-primary-800 border border-primary-200'
-          }`}>
-            <div className={`w-2 h-2 rounded-full mr-2 flex-shrink-0 ${
-              user?.role === 'admin' ? 'bg-error-500' : 
-              user?.role === 'doctor' ? 'bg-accent-teal' :
-              user?.role === 'researcher' ? 'bg-success-500' :
-              'bg-primary-500'
-            }`}></div>
-            <span className="whitespace-nowrap">
-              {user?.role?.charAt(0)?.toUpperCase() + user?.role?.slice(1)}
-            </span>
-          </div>
-          <span className="text-neutral-600 font-medium leading-none whitespace-nowrap">{user?.name}</span>
-        </div>
-        
-        <div className="flex items-center space-x-2 flex-shrink-0">
-          {isDoctorOrAdmin && (
-            <>
-              <Link
-                to="/reports"
-                className="inline-flex items-center justify-center px-3 py-2 border border-neutral-300 rounded-medical text-sm font-medium text-neutral-700 bg-white hover:bg-neutral-50 hover:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200 shadow-soft min-h-[2rem]"
-              >
-                <FileText className="h-4 w-4 mr-2 flex-shrink-0" />
-                <span className="whitespace-nowrap">Reports</span>
-              </Link>
-              {user?.role === 'admin' && (
-                <Link
-                  to="/admin"
-                  className="inline-flex items-center justify-center px-3 py-2 border border-neutral-300 rounded-medical text-sm font-medium text-neutral-700 bg-white hover:bg-neutral-50 hover:border-neutral-400 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:ring-offset-2 transition-all duration-200 shadow-soft min-h-[2rem]"
+    <div className="flex h-full flex-col space-y-4">
+      {shouldShowMetrics && (loadingMetrics || metricCards.length > 0) && (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          {loadingMetrics
+            ? Array.from({ length: skeletonCount || 3 }).map((_, index) => (
+                <div
+                  key={`metric-skeleton-${index}`}
+                  className="h-20 animate-pulse rounded-md border border-slate-200 bg-slate-100"
+                />
+              ))
+            : metricCards.map((card) => (
+                <div
+                  key={card.title}
+                  className={`flex items-start gap-3 rounded-md border ${card.surface} px-2.5 py-2.5`}
                 >
-                  <BarChart3 className="h-4 w-4 mr-2 flex-shrink-0" />
-                  <span className="whitespace-nowrap">Admin</span>
-                </Link>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Medical Statistics Cards (Admin) */}
-      {(user?.role === 'admin' && statistics && userStats) && (
-        <div className="space-y-6">
-          
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {/* Total Reports */}
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-primary-100 rounded-medical flex items-center justify-center">
-                      <FileText className="h-5 w-5 text-primary-600" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Total Reports
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {statistics.total_reports}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Draft Reports */}
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-warning-100 rounded-medical flex items-center justify-center">
-                      <Clock className="h-5 w-5 text-warning-600" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Draft Reports
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {Math.max(0, statistics.total_reports - statistics.finalized_reports)}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Finalized Reports */}
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-success-100 rounded-medical flex items-center justify-center">
-                      <CheckCircle className="h-5 w-5 text-success-600" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Finalized Reports
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {statistics.finalized_reports}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Total Users (with active/inactive breakdown) */}
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-medical-teal bg-opacity-20 rounded-medical flex items-center justify-center">
-                      <Users className="h-5 w-5 text-medical-teal" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        System Users
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {userStats.totalUsers}
-                      </dd>
-                      <dd className="mt-2 space-y-1">
-                        <div className="flex justify-between text-xs text-primary-700">
-                          <span>Active</span>
-                          <span className="font-medium text-success-600">{userStats.activeUsers}</span>
-                        </div>
-                        <div className="flex justify-between text-xs text-primary-700">
-                          <span>Inactive</span>
-                          <span className="font-medium text-primary-500">{userStats.inactiveUsers}</span>
-                        </div>
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Medical Doctor Statistics */}
-      {user?.role === 'doctor' && doctorStats && (
-        <div className="space-y-6">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold text-primary-900">Clinical Performance Metrics</h2>
-            <div className="flex items-center space-x-2 text-sm text-primary-600">
-              <Shield className="h-4 w-4" />
-              <span>Personal dashboard</span>
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-primary-100 rounded-medical flex items-center justify-center">
-                      <FileText className="h-5 w-5 text-primary-600" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Total Reports
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {doctorStats.totalReports}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-warning-100 rounded-medical flex items-center justify-center">
-                      <Clock className="h-5 w-5 text-warning-600" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Draft Reports
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {doctorStats.draftReports}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-success-100 rounded-medical flex items-center justify-center">
-                      <CheckCircle className="h-5 w-5 text-success-600" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Finalized Reports
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {doctorStats.finalizedReports}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="card-medical hover:shadow-medical-lg transition-shadow">
-              <div className="p-6">
-                <div className="flex items-center">
-                  <div className="flex-shrink-0">
-                    <div className="h-10 w-10 bg-medical-teal bg-opacity-20 rounded-medical flex items-center justify-center">
-                      <FolderOpen className="h-5 w-5 text-medical-teal" />
-                    </div>
-                  </div>
-                  <div className="ml-4 w-0 flex-1">
-                    <dl>
-                      <dt className="text-sm font-medium text-primary-600 truncate">
-                        Available Studies
-                      </dt>
-                      <dd className="text-2xl font-bold text-primary-900">
-                        {doctorStats.totalStudies}
-                      </dd>
-                    </dl>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Recent Medical Reports Section */}
-      <div className="card-medical shadow-medical">
-        <div className="px-6 py-6">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center space-x-3">
-              <div className="h-8 w-8 bg-primary-100 rounded-medical flex items-center justify-center">
-                <FileText className="h-4 w-4 text-primary-600" />
-              </div>
-              <h2 className="text-lg font-semibold text-primary-900">Recent Medical Activity</h2>
-            </div>
-            <Link
-              to="/reports"
-              className="inline-flex items-center text-sm font-medium text-primary-600 hover:text-primary-800 transition-colors"
-            >
-              View all reports
-              <BarChart3 className="ml-1 h-4 w-4" />
-            </Link>
-          </div>
-
-          {recentReports.length === 0 ? (
-            <div className="text-center py-12">
-              <div className="h-16 w-16 bg-primary-100 rounded-medical mx-auto flex items-center justify-center mb-4 shadow-chickadee">
-                <FileText className="h-8 w-8 text-primary-400" />
-              </div>
-              <h3 className="text-base font-medium text-primary-900 mb-2">No Recent Medical Activity</h3>
-              <p className="text-sm text-primary-600 max-w-sm mx-auto">
-                {user?.role === 'doctor' 
-                  ? 'Your recent medical reports and diagnostic activities will appear here once you start working with the ChickadeeX system.'
-                  : 'Recent medical system activity and diagnostic reports will be displayed in this section.'}
-              </p>
-            </div>
-          ) : (
-            <div className="space-y-3">
-              {recentReports.map((report) => (
-                <div key={report.id} className="border border-primary-200 rounded-medical p-4 hover:bg-chickadee-ivory hover:bg-opacity-50 transition-all duration-200 shadow-chickadee">
-                  <div className="flex items-center space-x-4">
-                    <div className="flex-shrink-0">
-                      <div className={`h-10 w-10 rounded-medical flex items-center justify-center ${
-                        report.is_finalized ? 'bg-success-100' : 'bg-warning-100'
-                      }`}>
-                        {report.is_finalized ? (
-                          <CheckCircle className="h-5 w-5 text-success-600" />
-                        ) : (
-                          <Clock className="h-5 w-5 text-warning-600" />
-                        )}
+                  <card.icon className={`mt-0.5 h-6 w-6 flex-shrink-0 ${card.iconColor}`} />
+                  <div className="flex-1">
+                    <p className="text-[0.65rem] font-semibold uppercase tracking-[0.2em] text-slate-500">{card.title}</p>
+                    <p className="text-base font-bold text-slate-800">{card.value}</p>
+                    {card.breakdown && (
+                      <div className="mt-1 space-y-0.5 text-[0.65rem] text-slate-500">
+                        {card.breakdown.map((item) => (
+                          <div key={item.label} className="flex items-center justify-between">
+                            <span className="font-medium text-slate-500">{item.label}</span>
+                            <span className="font-semibold text-slate-700">{item.value}</span>
+                          </div>
+                        ))}
                       </div>
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <Link
-                        to={`/reports/${report.id}`}
-                        className="text-sm font-semibold text-primary-900 hover:text-primary-700 transition-colors"
-                      >
-                        {report.patient_name || report.patient_id} - {report.modality}
-                      </Link>
-                      <p className="text-sm text-primary-600 mt-1">
-                        {report.study_description}
-                      </p>
-                    </div>
-                    <div className="flex-shrink-0">
-                      <span className={`badge ${
-                        report.is_finalized 
-                          ? 'status-finalized' 
-                          : 'status-draft'
-                      }`}>
-                        {report.is_finalized ? 'Completed' : 'In Progress'}
-                      </span>
-                    </div>
+                    )}
                   </div>
                 </div>
               ))}
-            </div>
-          )}
         </div>
+      )}
+
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+        {sections.map((section) => (
+          <section
+            key={section.title}
+            className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                {section.title}
+              </h2>
+              <span className="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-300">
+                {section.items.length} tools
+              </span>
+            </div>
+
+            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              {section.items.map((item) => (
+                <Link
+                  key={item.name}
+                  to={item.to}
+                  className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-medical"
+                >
+                  <div className="flex items-start gap-3">
+                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary-50 text-primary-600">
+                      <item.icon className="h-5 w-5" />
+                    </div>
+                    <div className="space-y-1">
+                      <p className="text-sm font-semibold text-slate-800">{item.name}</p>
+                      <p className="text-xs text-slate-500">{item.description}</p>
+                    </div>
+                  </div>
+                  <span className="mt-3 inline-flex items-center text-sm font-semibold text-primary-600 group-hover:text-primary-700">
+                    {item.cta}
+                    <ArrowRight className="ml-2 h-4 w-4" />
+                  </span>
+                </Link>
+              ))}
+            </div>
+          </section>
+        ))}
       </div>
     </div>
   );

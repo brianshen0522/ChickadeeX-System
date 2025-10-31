@@ -31,7 +31,9 @@
     "joi": "^17.11.0",
     "compression": "^1.7.4",
     "express-session": "^1.17.3",
-    "connect-redis": "^7.1.0"
+    "connect-redis": "^7.1.0",
+    "dcmjs": "^0.29.9",
+    "sharp": "^0.32.6"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

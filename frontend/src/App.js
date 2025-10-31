@@ -1,18 +1,25 @@
-import React from 'react';
+import React, { Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PageProvider } from './contexts/PageContext';
-import LoginPage from './pages/LoginPage';
-import DashboardPage from './pages/DashboardPage';
-import ReportsPage from './pages/ReportsPage';
-import ReportDetailPage from './pages/ReportDetailPage';
-import AdminPage from './pages/AdminPage';
-import BlueLightViewerPage from './pages/BlueLightViewerPage';
-import ProfilePage from './pages/ProfilePage';
-import StudiesPage from './pages/StudiesPage';
-import Layout from './components/Layout/Layout';
 import LoadingSpinner from './components/UI/LoadingSpinner';
+import Layout from './components/Layout/Layout';
+
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const ReportsLandingPage = lazy(() => import('./pages/ReportsLandingPage'));
+const ReportDetailPage = lazy(() => import('./pages/ReportDetailPage'));
+const AdminLandingPage = lazy(() => import('./pages/admin/AdminLandingPage'));
+const AdminUsersPage = lazy(() => import('./pages/admin/AdminUsersPage'));
+const AdminLLMConfigPage = lazy(() => import('./pages/admin/AdminLLMConfigPage'));
+const AdminPacsSettingsPage = lazy(() => import('./pages/admin/AdminPacsSettingsPage'));
+const AdminSystemSettingsPage = lazy(() => import('./pages/admin/AdminSystemSettingsPage'));
+const BlueLightViewerPage = lazy(() => import('./pages/BlueLightViewerPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const StudiesPage = lazy(() => import('./pages/StudiesPage'));
+const UploadViewerPage = lazy(() => import('./pages/UploadViewerPage'));
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRoles = [] }) {
@@ -27,7 +34,7 @@ function ProtectedRoute({ children, requiredRoles = [] }) {
   }
 
   if (requiredRoles.length > 0 && !requiredRoles.includes(user?.role)) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to="/" replace />;
   }
 
   return children;
@@ -43,77 +50,138 @@ function AppRoutes() {
 
   if (!isAuthenticated) {
     return (
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="*" element={<Navigate to="/login" replace />} />
-      </Routes>
+      <Suspense fallback={<LoadingSpinner />}>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="*" element={<Navigate to="/login" replace />} />
+        </Routes>
+      </Suspense>
     );
   }
 
   return (
     <PageProvider>
       <Layout>
-        <Routes>
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
-        <Route 
-          path="/dashboard" 
-          element={
-            <ProtectedRoute>
-              <DashboardPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/reports" 
-          element={
-            <ProtectedRoute>
-              <ReportsPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/reports/:reportId" 
-          element={
-            <ProtectedRoute>
-              <ReportDetailPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/studies" 
-          element={
-            <ProtectedRoute requiredRoles={['doctor']}>
-              <StudiesPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/bluelight" 
-          element={
-            <ProtectedRoute requiredRoles={['doctor']}>
-              <BlueLightViewerPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/admin" 
-          element={
-            <ProtectedRoute requiredRoles={['admin']}>
-              <AdminPage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route 
-          path="/profile" 
-          element={
-            <ProtectedRoute>
-              <ProfilePage />
-            </ProtectedRoute>
-          } 
-        />
-        <Route path="/login" element={<Navigate to="/dashboard" replace />} />
-        <Route path="*" element={<Navigate to="/dashboard" replace />} />
-        </Routes>
+        <Suspense fallback={<LoadingSpinner />}>
+          <Routes>
+            <Route
+              path="/"
+              element={
+                <ProtectedRoute>
+                  <DashboardPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route
+              path="/reports"
+              element={
+                <ProtectedRoute>
+                  <ReportsLandingPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/reports/draft"
+              element={
+                <ProtectedRoute>
+                  <ReportsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/reports/finalized"
+              element={
+                <ProtectedRoute>
+                  <ReportsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/reports/:reportId"
+              element={
+                <ProtectedRoute>
+                  <ReportDetailPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/studies"
+              element={
+                <ProtectedRoute requiredRoles={['doctor']}>
+                  <StudiesPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/bluelight"
+              element={
+                <ProtectedRoute requiredRoles={['doctor']}>
+                  <BlueLightViewerPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/demo"
+              element={
+                <ProtectedRoute requiredRoles={['doctor', 'observer']}>
+                  <UploadViewerPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/viewer/uploads" element={<Navigate to="/demo" replace />} />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute requiredRoles={['admin']}>
+                  <AdminLandingPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/users"
+              element={
+                <ProtectedRoute requiredRoles={['admin']}>
+                  <AdminUsersPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/llm-config"
+              element={
+                <ProtectedRoute requiredRoles={['admin']}>
+                  <AdminLLMConfigPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/pacs-settings"
+              element={
+                <ProtectedRoute requiredRoles={['admin']}>
+                  <AdminPacsSettingsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin/system-settings"
+              element={
+                <ProtectedRoute requiredRoles={['admin']}>
+                  <AdminSystemSettingsPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute requiredRoles={['admin', 'doctor', 'researcher']}>
+                  <ProfilePage />
+                </ProtectedRoute>
+              }
+            />
+            <Route path="/login" element={<Navigate to="/" replace />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Routes>
+        </Suspense>
       </Layout>
     </PageProvider>
   );

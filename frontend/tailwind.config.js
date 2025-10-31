@@ -143,7 +143,7 @@ module.exports = {
         'tech-lg': '0 4px 16px rgba(6, 182, 212, 0.12)',
       },
       borderRadius: {
-        'medical': '12px',
+        'medical': '10px',
       }
     },
   },

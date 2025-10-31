@@ -95,7 +95,7 @@ function wadorsLoader2(url, onlyload) {
             headers[Object.keys(wadoToken)[to]] = wadoToken[Object.keys(wadoToken)[to]];
     }
 
-    fetch(url, { headers })
+    fetch(url, { headers, credentials: 'include' })
         .then(function (res) {
             if (!res.ok) {
                 console.error("HTTP error:", res.status, res.statusText);
@@ -540,7 +540,7 @@ function loadDICOMFromUrl(url, loadimage = true) {
             headers[Object.keys(wadoToken)[to]] = wadoToken[Object.keys(wadoToken)[to]];
     }
 
-    fetch(url, { headers })
+    fetch(url, { headers, credentials: 'include' })
         .then(function (res) {
             if (!res.ok) {
                 console.error("HTTP error:", res.status, res.statusText);

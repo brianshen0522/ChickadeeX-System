@@ -3,7 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { usePageContext } from '../contexts/PageContext';
 import toast from 'react-hot-toast';
 import { getReports, getReport, createReport, createReportVersion, generateReportPreview } from '../services/reportService';
-import { AlertTriangle, X, Check, Maximize2, Minimize2, Edit3, Save, Sparkles, FileText, Eye, EyeOff, RefreshCw, AlertCircle } from 'lucide-react';
+import { AlertTriangle, X, Check, Maximize2, Minimize2, Edit3, Save, Sparkles, FileText, Eye, EyeOff, RefreshCw, Columns } from 'lucide-react';
 
 const BlueLightViewerPage = () => {
   const { setPageTitle, setPageDescription } = usePageContext();
@@ -29,6 +29,11 @@ const BlueLightViewerPage = () => {
   const [aiGeneratedContent, setAiGeneratedContent] = useState(null); // eslint-disable-line no-unused-vars
   const [isAiMode, setIsAiMode] = useState(false);
   const [compactMode, setCompactMode] = useState(false);
+  const [isWideLayout, setIsWideLayout] = useState(() => {
+    if (typeof window === 'undefined') return true;
+    return window.innerWidth >= 1024;
+  });
+  const [viewerFrameKey, setViewerFrameKey] = useState(0);
 
   const location = useLocation();
   const params = useMemo(() => new URLSearchParams(location.search), [location.search]);
@@ -80,7 +85,7 @@ const BlueLightViewerPage = () => {
 
   // Resizable split handlers
   useEffect(() => {
-    if (!isResizing || isFullscreen) return;
+    if (!isResizing || isFullscreen || !isWideLayout) return;
     const onMove = (e) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
@@ -95,7 +100,23 @@ const BlueLightViewerPage = () => {
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
     };
-  }, [isResizing, isFullscreen]);
+  }, [isResizing, isFullscreen, isWideLayout]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handleResize = () => {
+      setIsWideLayout(window.innerWidth >= 1024);
+    };
+    handleResize();
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, []);
+
+  useEffect(() => {
+    if (!isWideLayout) {
+      setIsResizing(false);
+    }
+  }, [isWideLayout]);
 
   const onSelectVersion = (no) => {
     if (hasUnsavedChanges) {
@@ -341,6 +362,8 @@ const BlueLightViewerPage = () => {
     return `${base}?${usp.toString()}`;
   }, [studyUIDFromQuery]);
 
+  const isStudyLoaded = Boolean(embedUrl);
+
   const currentModelLabel = useMemo(() => {
     const config = aiGeneratedContent?.model_config;
     if (!config) return '';
@@ -348,6 +371,26 @@ const BlueLightViewerPage = () => {
     const providerName = typeof config.provider === 'string' ? config.provider.trim() : '';
     return customName || providerName;
   }, [aiGeneratedContent]);
+
+  const handleViewerRefresh = () => {
+    if (!isStudyLoaded) {
+      toast.error('No study loaded');
+      return;
+    }
+    setViewerFrameKey((prev) => prev + 1);
+  };
+
+  const handleResetLayout = () => {
+    setSplitPct(65);
+  };
+
+  const handleOpenInNewWindow = () => {
+    if (!isStudyLoaded) {
+      toast.error('No study loaded');
+      return;
+    }
+    window.open(embedUrl, '_blank', 'noopener,noreferrer');
+  };
 
   const handleSaveDescription = async () => {
     if (!reportId) {
@@ -523,206 +566,296 @@ const BlueLightViewerPage = () => {
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 min-h-0 p-4">
+      {/* Main Content Area with responsive padding */}
+      <div className="flex-1 min-h-0 px-2 pb-4 pt-3 sm:px-4 lg:px-5 lg:pb-5">
         {isFullscreen ? (
           /* Fullscreen Viewer Mode */
-          <div className="h-full bg-white rounded-2xl shadow-lg overflow-hidden border border-gray-200">
+          <div className="h-full rounded-2xl border border-gray-200 bg-white shadow-lg">
             <div className="h-full p-4">
-              {embedUrl ? (
-                <iframe 
-                  title="BlueLightViewer" 
-                  src={embedUrl} 
-                  className="w-full h-full rounded-xl border border-gray-200" 
-                  allowFullScreen 
+              {isStudyLoaded ? (
+                <iframe
+                  key={viewerFrameKey}
+                  title="BlueLightViewer"
+                  src={embedUrl}
+                  className="h-full w-full rounded-xl border border-gray-200"
+                  allowFullScreen
                 />
               ) : (
-                <div className="w-full h-full rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center">
-                  <div className="text-center px-4">
-                    <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                      <FileText className="h-8 w-8 text-gray-400" />
-                    </div>
-                    <div className="text-xl font-medium text-gray-900 mb-2">No Study Loaded</div>
-                    <div className="text-gray-500">Open a study from the Studies page to begin viewing images.</div>
+                <div className="flex h-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-gray-300 bg-gray-50 px-6 text-center">
+                  <div className="mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-gray-200">
+                    <FileText className="h-8 w-8 text-gray-500" />
                   </div>
+                  <p className="text-lg font-semibold text-gray-800">No Study Loaded</p>
+                  <p className="mt-1 text-sm text-gray-500">
+                    Choose a DICOM study from the Studies page to populate the viewer.
+                  </p>
                 </div>
               )}
             </div>
           </div>
         ) : (
           /* Split View Mode */
-          <div ref={containerRef} className="h-full w-full flex gap-4">
-            {/* Left: DICOM Viewer */}
-            <div style={{ width: `${splitPct}%` }} className="h-full">
-              <div className="bg-white rounded-2xl shadow-lg h-full overflow-hidden border border-gray-200">
-                <div className="h-full p-3">
-                  {embedUrl ? (
-                    <iframe 
-                      title="BlueLightViewer" 
-                      src={embedUrl} 
-                      className="w-full h-full rounded-xl border border-gray-200" 
-                      allowFullScreen 
-                    />
-                  ) : (
-                    <div className="w-full h-full rounded-xl border-2 border-dashed border-gray-300 flex items-center justify-center">
-                      <div className="text-center px-4">
-                        <div className="h-16 w-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                          <FileText className="h-8 w-8 text-gray-400" />
-                        </div>
-                        <div className="text-lg font-medium text-gray-900 mb-2">No Study Loaded</div>
-                        <div className="text-sm text-gray-500">Open a study from the Studies page to begin.</div>
-                      </div>
+          <div
+            ref={containerRef}
+            className={`flex h-full w-full transition-all ${isWideLayout ? 'flex-row gap-4' : 'flex-col gap-3'}`}
+          >
+            <div
+              style={isWideLayout ? { width: `${splitPct}%` } : undefined}
+              className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical min-h-[500px]"
+            >
+              {/* Improved toolbar with better alignment */}
+              <div className="flex-shrink-0 border-b border-slate-200 bg-slate-900 px-4 py-2.5">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-4">
+                    <div className="flex flex-col gap-0.5">
+                      <p className="text-[0.65rem] font-semibold uppercase tracking-[0.15em] text-slate-400">
+                        Medical Imaging Viewer
+                      </p>
+                      <p className="text-sm font-medium text-white truncate max-w-[200px]" title={patientNameFromQuery || 'Anonymous Patient'}>
+                        {patientNameFromQuery || 'Anonymous Patient'}
+                      </p>
                     </div>
-                  )}
+                    <div className="hidden sm:flex items-center gap-2 text-xs">
+                      <span className="rounded-full border border-slate-600 bg-slate-800 px-2.5 py-1 text-slate-200">
+                        ID: {patientIdFromQuery || 'N/A'}
+                      </span>
+                      {reportData?.finalized_at && (
+                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/20 border border-emerald-400/30 px-2.5 py-1 text-emerald-200 font-medium">
+                          <Check className="h-3 w-3" />
+                          Finalized
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={handleResetLayout}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-600 focus:outline-none focus:ring-2 focus:ring-slate-500"
+                      title="Reset panel layout"
+                    >
+                      <Columns className="h-3.5 w-3.5" />
+                      <span className="hidden lg:inline">Reset</span>
+                    </button>
+                    <button
+                      onClick={handleViewerRefresh}
+                      disabled={!isStudyLoaded}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-600 bg-slate-700 px-2.5 py-1.5 text-xs font-medium text-slate-200 transition hover:bg-slate-600 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-slate-500"
+                      title="Reload viewer"
+                    >
+                      <RefreshCw className="h-3.5 w-3.5" />
+                      <span className="hidden lg:inline">Reload</span>
+                    </button>
+                    <button
+                      onClick={handleOpenInNewWindow}
+                      disabled={!isStudyLoaded}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-blue-500 bg-blue-600 px-2.5 py-1.5 text-xs font-medium text-white transition hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      title="Open in new window"
+                    >
+                      <Maximize2 className="h-3.5 w-3.5" />
+                      <span className="hidden lg:inline">Open</span>
+                    </button>
+                  </div>
                 </div>
+              </div>
+
+              {/* Viewer viewport with proper scaling */}
+              <div className="flex-1 relative bg-slate-950 overflow-hidden">
+                {isStudyLoaded ? (
+                  <iframe
+                    key={viewerFrameKey}
+                    title="BlueLightViewer"
+                    src={embedUrl}
+                    className="absolute inset-0 w-full h-full border-0"
+                    allowFullScreen
+                    style={{ minHeight: '400px' }}
+                  />
+                ) : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 text-center">
+                    <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-slate-700/50 border border-slate-600">
+                      <FileText className="h-10 w-10 text-slate-400" />
+                    </div>
+                    <h3 className="text-lg font-semibold text-slate-200 mb-2">No Study Loaded</h3>
+                    <p className="text-sm text-slate-400 max-w-sm">
+                      Navigate to the Studies page to select a DICOM study for viewing
+                    </p>
+                    <div className="mt-4 rounded-lg bg-slate-800/50 border border-slate-700 px-4 py-2">
+                      <p className="text-xs text-slate-500">
+                        Viewer will display medical images here
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Resizer */}
-            <div
-              className={`w-2 bg-gray-200 hover:bg-blue-300 cursor-col-resize rounded-full ${isResizing ? 'bg-blue-400' : ''} transition-colors`}
-              onMouseDown={() => setIsResizing(true)}
-              title="Drag to resize panels"
-            />
+            {isWideLayout && (
+              <div
+                className={`flex-shrink-0 w-2 cursor-col-resize rounded-full bg-slate-200 transition-colors hover:bg-primary-300 ${isResizing ? 'bg-primary-400' : ''}`}
+                onMouseDown={() => setIsResizing(true)}
+                title="Drag to resize panels"
+              />
+            )}
 
-            {/* Right: Report Editor */}
-            <div style={{ width: `${100 - splitPct}%` }} className="h-full">
-              <div className="bg-white rounded-2xl shadow-lg h-full flex flex-col border border-gray-200">
-                
-                {/* Simple Header */}
-                <div className="px-4 py-3 border-b border-gray-200 bg-gray-50 rounded-t-2xl">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex flex-col space-y-2">
-                      {isAiMode && currentModelLabel && (
-                        <span className="inline-flex items-center px-2.5 py-1 rounded-md border border-purple-200 bg-purple-50 text-xs font-medium text-purple-700">
-                          <Sparkles className="h-3 w-3 mr-1" />
-                          AI • {currentModelLabel}
+            <div
+              style={isWideLayout ? { width: `${100 - splitPct}%` } : undefined}
+              className="flex flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical min-h-[500px]"
+            >
+              {/* Report panel header with proper alignment */}
+              <div className="flex-shrink-0 border-b border-slate-200 bg-slate-50 px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    {isAiMode && currentModelLabel && (
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-2.5 py-1 text-xs font-medium text-purple-700">
+                        <Sparkles className="h-3 w-3" />
+                        AI • {currentModelLabel}
+                      </span>
+                    )}
+                    <div className="flex items-center gap-2 text-sm">
+                      <span className="font-medium text-slate-700">Version:</span>
+                      <select
+                        className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-sm shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                        value={version}
+                        onChange={(e) => onSelectVersion(e.target.value)}
+                        disabled={!versions.length}
+                      >
+                        {versions.length === 0 && <option value="">No versions</option>}
+                        {versions.map((v) => (
+                          <option key={v.version_no} value={v.version_no}>
+                            v{v.version_no}
+                            {v.version_no === latest ? ' (latest)' : ''}
+                            {v.generated_by_ai ? ' (AI)' : ''}
+                          </option>
+                        ))}
+                      </select>
+                      {versions.length > 0 && (
+                        <span className="text-xs text-slate-500">
+                          of {versions.length}
                         </span>
                       )}
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-                        <div className="flex items-center space-x-2 text-sm">
-                          <span className="text-gray-600">Version:</span>
-                          <select
-                            className="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:ring-1 focus:ring-blue-500"
-                            value={version}
-                            onChange={(e) => onSelectVersion(e.target.value)}
-                            disabled={!versions.length}
-                          >
-                            {versions.length === 0 && (
-                              <option value="">No versions</option>
-                            )}
-                            {versions.map((v) => (
-                              <option key={v.version_no} value={v.version_no}>
-                                v{v.version_no}{v.version_no === latest ? ' (latest)' : ''}{v.generated_by_ai ? ' (AI)' : ''}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-                        <div className="flex items-center space-x-3 text-xs">
-                          {hasUnsavedChanges && (
-                            <span className="flex items-center space-x-1 text-orange-600">
-                              <AlertCircle className="h-3 w-3" />
-                              <span>Unsaved</span>
-                            </span>
-                          )}
-                          {isAiMode && !currentModelLabel && (
-                            <span className="flex items-center space-x-1 text-purple-600">
-                              <Sparkles className="h-3 w-3" />
-                              <span>AI ready</span>
-                            </span>
-                          )}
-                        </div>
-                      </div>
                     </div>
-                    <div className="flex items-center space-x-2">
+                  </div>
+
+                  <button
+                    onClick={() => setCompactMode(!compactMode)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-100 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                    title={compactMode ? 'Show editor' : 'Hide editor'}
+                  >
+                    {compactMode ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                    <span className="hidden sm:inline">
+                      {compactMode ? 'Show' : 'Hide'}
+                    </span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Action bar with stable positioning */}
+              <div className="flex-shrink-0 border-b border-slate-200 bg-white px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-2">
+                    <div className="text-xs font-medium text-slate-600">
+                      {hasUnsavedChanges ? (
+                        <span className="inline-flex items-center gap-1 text-amber-600">
+                          <div className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                          Unsaved changes
+                        </span>
+                      ) : versions.length ? (
+                        <span className="text-slate-500">
+                          Viewing v{version || latest || 1}
+                        </span>
+                      ) : (
+                        <span className="text-slate-400">
+                          No content saved
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="inline-flex items-center gap-1.5 rounded-lg bg-gradient-to-r from-purple-600 to-purple-700 px-3 py-2 text-sm font-medium text-white shadow-sm transition hover:from-purple-700 hover:to-purple-800 focus:outline-none focus:ring-2 focus:ring-purple-500 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+                      onClick={handleGenerate}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 animate-spin" />
+                          <span className="hidden sm:inline">Generating…</span>
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="h-4 w-4" />
+                          <span className="hidden sm:inline">Generate</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium shadow-sm transition focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+                        hasUnsavedChanges
+                          ? 'bg-emerald-600 text-white hover:bg-emerald-700 focus:ring-emerald-500'
+                          : 'bg-slate-200 text-slate-500 cursor-not-allowed'
+                      } disabled:cursor-not-allowed disabled:opacity-60`}
+                      onClick={handleSaveWithDuplicateCheck}
+                      disabled={loading || !hasUnsavedChanges}
+                    >
+                      <Save className="h-4 w-4" />
+                      <span className="hidden sm:inline">Save</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Content area with stable layout */}
+              <div className="flex-1 flex flex-col overflow-hidden">
+                {compactMode ? (
+                  <div className="flex flex-1 items-center justify-center bg-slate-50 px-6">
+                    <div className="text-center">
+                      <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-slate-200 px-4 py-2 text-sm font-medium text-slate-600">
+                        <EyeOff className="h-4 w-4" />
+                        Report editor is hidden
+                      </div>
+                      <p className="text-sm text-slate-500 mb-4">
+                        The findings and impression editor is currently collapsed to maximize viewer space.
+                      </p>
                       <button
-                        onClick={() => setCompactMode(!compactMode)}
-                        className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-200 rounded transition-colors"
-                        title={compactMode ? 'Show editor' : 'Hide editor'}
+                        onClick={() => setCompactMode(false)}
+                        className="inline-flex items-center gap-2 rounded-lg bg-primary-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500"
                       >
-                        {compactMode ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+                        <Eye className="h-4 w-4" />
+                        Show Report Editor
                       </button>
                     </div>
                   </div>
-                </div>
-
-                {/* Report Content */}
-                <div className="flex-1 overflow-hidden">
-                  <div className="h-full flex flex-col">
-                    <div className="px-4 py-2 bg-white border-b border-gray-200 flex justify-end space-x-2">
-                      <button 
-                        className="inline-flex items-center px-3 py-1.5 bg-purple-600 text-white rounded hover:bg-purple-700 text-sm" 
-                        onClick={handleGenerate} 
-                        disabled={loading}
-                      >
-                        <Sparkles className="h-4 w-4 mr-1" />
-                        {loading ? (
-                          <>
-                            <RefreshCw className="h-4 w-4 mr-1 animate-spin" />
-                            Generating…
-                          </>
-                        ) : 'Generate'}
-                      </button>
-                      <button 
-                        className={`inline-flex items-center px-3 py-1.5 rounded text-sm ${
-                          hasUnsavedChanges 
-                            ? 'bg-green-600 hover:bg-green-700 text-white' 
-                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
-                        }`}
-                        onClick={handleSaveWithDuplicateCheck} 
-                        disabled={loading || !hasUnsavedChanges}
-                      >
-                        <Save className="h-4 w-4 mr-1" />
-                        {loading ? 'Saving…' : 'Save'}
-                      </button>
+                ) : (
+                  <div className="flex-1 overflow-hidden bg-white">
+                    <div className="h-full overflow-auto p-4">
+                      <div className="grid gap-6">
+                        <div>
+                          <label className="mb-3 block text-sm font-semibold text-slate-700">
+                            Findings
+                          </label>
+                          <textarea
+                            className="h-60 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors resize-none"
+                            value={findingText}
+                            onChange={(e) => updateFindings(e.target.value)}
+                            placeholder="Describe radiographic observations and clinical findings..."
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-3 block text-sm font-semibold text-slate-700">
+                            Impression
+                          </label>
+                          <textarea
+                            className="h-44 w-full rounded-lg border border-slate-300 bg-white px-3 py-3 text-sm text-slate-800 shadow-sm focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition-colors resize-none"
+                            value={impressionText}
+                            onChange={(e) => updateImpression(e.target.value)}
+                            placeholder="Summarize clinical impression and recommendations..."
+                          />
+                        </div>
+                      </div>
                     </div>
-
-                    {compactMode ? (
-                      <div className="flex-1 flex items-center justify-center text-gray-400 text-sm">
-                        <div className="text-center space-y-2">
-                          <div className="flex items-center justify-center space-x-2 text-gray-500">
-                            <EyeOff className="h-4 w-4" />
-                            <span>Report editor hidden</span>
-                          </div>
-                          <button
-                            onClick={() => setCompactMode(false)}
-                            className="inline-flex items-center text-blue-600 hover:text-blue-700 text-sm"
-                          >
-                            <Eye className="h-4 w-4 mr-1" />
-                            Show editor
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="flex-1 overflow-auto p-4">
-                        <div className="space-y-4">
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Findings
-                            </label>
-                            <textarea 
-                              className="w-full h-48 px-3 py-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none" 
-                              value={findingText} 
-                              onChange={(e) => updateFindings(e.target.value)}
-                              placeholder="Enter findings..."
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-sm font-medium text-gray-700 mb-2">
-                              Impression
-                            </label>
-                            <textarea 
-                              className="w-full h-32 px-3 py-2 border border-gray-300 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-none" 
-                              value={impressionText} 
-                              onChange={(e) => updateImpression(e.target.value)}
-                              placeholder="Enter impression..."
-                            />
-                          </div>
-                        </div>
-                      </div>
-                    )}
                   </div>
-                </div>
+                )}
               </div>
             </div>
           </div>

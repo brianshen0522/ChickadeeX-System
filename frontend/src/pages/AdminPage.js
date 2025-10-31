@@ -44,10 +44,10 @@ import { format } from 'date-fns';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 
-const AdminPage = () => {
+const AdminPage = ({ initialTab = 'users', standalone = false }) => {
   const { user: currentUser } = useAuth();
   const { setPageTitle, setPageDescription } = usePageContext();
-  const [activeTab, setActiveTab] = useState('users');
+  const [activeTab, setActiveTab] = useState(initialTab);
   const [users, setUsers] = useState([]);
   const [llmConfigs, setLLMConfigs] = useState([]);
   const [systemSettings, setSystemSettings] = useState({ system_name: '', max_concurrent_tasks: 5, backup_frequency: 'daily' });
@@ -71,15 +71,22 @@ const AdminPage = () => {
   ];
 
   useEffect(() => {
-    setPageTitle('Admin Panel');
-    setPageDescription('Manage users, models, and system settings.');
+    if (standalone) {
+      setActiveTab(initialTab);
+    }
+  }, [initialTab, standalone]);
+
+  useEffect(() => {
+    if (!standalone) {
+      setPageTitle('Admin Panel');
+      setPageDescription('Manage users, models, and system settings.');
+    }
     fetchData();
-    // Load system stats and LLM configs for dashboard
-    getStatistics().then(setStats).catch(()=>{});
-    getLLMConfigs().then(setLLMConfigs).catch(()=>{});
-    getUsers().then(setUsers).catch(()=>{});
-    getUserStats().then(setUserStats).catch(()=>{});
-  }, [activeTab, setPageTitle, setPageDescription]);
+    getStatistics().then(setStats).catch(() => {});
+    getLLMConfigs().then(setLLMConfigs).catch(() => {});
+    getUsers().then(setUsers).catch(() => {});
+    getUserStats().then(setUserStats).catch(() => {});
+  }, [activeTab, setPageTitle, setPageDescription, standalone]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -111,6 +118,17 @@ const AdminPage = () => {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    const handleRefresh = (event) => {
+      const targetTab = event.detail?.tab;
+      if (targetTab && targetTab !== activeTab) return;
+      fetchData();
+    };
+    window.addEventListener('admin:refresh', handleRefresh);
+    return () => window.removeEventListener('admin:refresh', handleRefresh);
+  }, [activeTab]);
+
 
   const handleSaveSystemSettings = async () => {
     try {
@@ -263,6 +281,27 @@ const AdminPage = () => {
       window.dispatchEvent(new Event('dashboardRefresh'));
     } catch (e) {
       const msg = e?.response?.data?.error || 'Failed to delete user';
+      toast.error(msg);
+    }
+  };
+
+  const commitPacsConfig = async () => {
+    try {
+      const source = editingPacs || pacsConfig;
+      const payload = {
+        pacs_url: source.pacs_url || '',
+        auth_type: source.auth_type || 'none',
+        credentials: source.credentials || undefined,
+        connection_timeout: typeof source.connection_timeout === 'number' ? source.connection_timeout : 30,
+        query_timeout: typeof source.query_timeout === 'number' ? source.query_timeout : 60
+      };
+      await updatePACSConfig(payload);
+      toast.success('PACS settings saved');
+      const fresh = await getPACSConfig();
+      setPacsConfig(fresh || payload);
+      setEditingPacs(null);
+    } catch (error) {
+      const msg = error?.response?.data?.error || 'Failed to save PACS settings';
       toast.error(msg);
     }
   };
@@ -949,26 +988,7 @@ const AdminPage = () => {
             </button>
             <button
               className="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-              onClick={async () => {
-                try {
-                  const src = editingPacs || pacsConfig;
-                  const payload = {
-                    pacs_url: src.pacs_url || '',
-                    auth_type: src.auth_type || 'none',
-                    credentials: src.credentials || undefined,
-                    connection_timeout: typeof src.connection_timeout === 'number' ? src.connection_timeout : 30,
-                    query_timeout: typeof src.query_timeout === 'number' ? src.query_timeout : 60,
-                  };
-                  await updatePACSConfig(payload);
-                  toast.success('PACS settings saved');
-                  const fresh = await getPACSConfig();
-                  setPacsConfig(fresh || payload);
-                  setEditingPacs(null);
-                } catch (e) {
-                  const msg = e?.response?.data?.error || 'Failed to save PACS settings';
-                  toast.error(msg);
-                }
-              }}
+              onClick={commitPacsConfig}
             >
               <Save className="h-4 w-4 mr-2" />
               Save Configuration
@@ -978,6 +998,26 @@ const AdminPage = () => {
       </div>
     );
   };
+
+  const tabContent = (
+    <>
+      {activeTab === 'users' && renderUsers()}
+      {activeTab === 'llm' && renderLLMConfig()}
+      {activeTab === 'pacs' && renderPACSSettings()}
+      {activeTab === 'system' && renderSystemFlags()}
+    </>
+  );
+
+  if (standalone) {
+    if (loading) {
+      return <LoadingSpinner />;
+    }
+    return (
+      <div className="flex h-full flex-col space-y-4">
+        {tabContent}
+      </div>
+    );
+  }
 
   if (loading) {
     return <LoadingSpinner />;
@@ -1087,10 +1127,7 @@ const AdminPage = () => {
 
       {/* Tab Content */}
       <div className="flex-1 overflow-y-auto">
-        {activeTab === 'users' && renderUsers()}
-        {activeTab === 'llm' && renderLLMConfig()}
-        {activeTab === 'pacs' && renderPACSSettings()}
-        {activeTab === 'system' && renderSystemFlags()}
+        {tabContent}
       </div>
     </div>
   );

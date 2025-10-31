@@ -87,6 +87,43 @@ CREATE TABLE report_versions (
     UNIQUE(report_id, version_no)
 );
 
+-- Ad-hoc uploads for BlueLight viewer
+CREATE TABLE uploads (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    stored_filename TEXT NOT NULL,
+    original_filename TEXT NOT NULL,
+    mime_type TEXT NOT NULL,
+    file_size BIGINT NOT NULL,
+    modality VARCHAR(32),
+    hash TEXT,
+    status VARCHAR(16) NOT NULL DEFAULT 'ready',
+    source VARCHAR(32) NOT NULL DEFAULT 'upload',
+    thumbnail_key TEXT,
+    converted_image_path TEXT,
+    dicom_metadata JSONB,
+    is_dicom BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_uploads_user_id ON uploads(user_id);
+CREATE INDEX IF NOT EXISTS idx_uploads_created_at ON uploads(created_at);
+CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
+
+CREATE TABLE IF NOT EXISTS file_metadata (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    file_id UUID NOT NULL REFERENCES uploads(id) ON DELETE CASCADE,
+    study_uid TEXT,
+    series_uid TEXT,
+    patient_id TEXT,
+    modality TEXT,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create _configs table
 CREATE TABLE llm_configs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -282,6 +319,7 @@ SELECT
     r.doctor_id,
     u.name as doctor_name,
     r.created_at,
+    r.updated_at,
     r.finalized_at,
     r.tags,
     (SELECT COUNT(*) FROM report_versions rv WHERE rv.report_id = r.id) as version_count,

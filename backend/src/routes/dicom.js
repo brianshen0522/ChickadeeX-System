@@ -107,8 +107,22 @@ router.get('/studies', async (req, res) => {
 
     res.json({ items: response.data || [], limit: params.limit, offset: params.offset });
   } catch (error) {
+    const status = error?.response?.status;
+    const limitValue = parseInt(req.query.limit || 50, 10);
+    const offsetValue = parseInt(req.query.offset || 0, 10);
+
+    if (status === 204 || status === 404) {
+      logger.info('DICOM studies request returned no results');
+      return res.json({ items: [], limit: limitValue, offset: offsetValue });
+    }
+
     logger.error('DICOM studies fetch failed:', error?.response?.data || error.message || error);
-    res.status(502).json({ error: 'Failed to fetch DICOM studies' });
+    res.json({
+      items: [],
+      limit: limitValue,
+      offset: offsetValue,
+      warning: 'Unable to retrieve studies from PACS at this time.'
+    });
   }
 });
 

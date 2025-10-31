@@ -18,6 +18,7 @@ const adminRoutes = require('./routes/admin');
 const llmRoutes = require('./routes/llm');
 const auditRoutes = require('./routes/audit');
 const dicomRoutes = require('./routes/dicom');
+const uploadRoutes = require('./routes/uploads');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -86,6 +87,8 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/llm', llmRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/dicom', dicomRoutes);
+app.use('/api/uploads', uploadRoutes);
+app.use('/api/demo', uploadRoutes);
 
 // 404 handler
 app.use('*', (req, res) => {

@@ -162,6 +162,7 @@ const schemas = {
         report_date_to: Joi.date().optional(),
         modality: Joi.string().optional(),
         doctor_id: Joi.string().uuid().optional(),
+        status: Joi.string().valid('draft', 'finalized', 'completed', 'all').insensitive().optional(),
         finalized_only: Joi.boolean().optional(),
         draft_only: Joi.boolean().optional(),
         limit: Joi.number().integer().min(1).max(100).optional(),

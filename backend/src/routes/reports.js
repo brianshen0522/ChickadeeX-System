@@ -37,7 +37,7 @@ router.get('/llm-configs',
 );
 
 // Get reports with filtering and pagination
-router.get('/', 
+router.get('/',
     requireAnyRole(['admin', 'doctor', 'researcher', 'observer']),
     validateQuery(schemas.reportSearch),
     async (req, res) => {
@@ -52,6 +52,7 @@ router.get('/',
                 report_date_to,
                 modality,
                 doctor_id,
+                status,
                 finalized_only = false,
                 draft_only = false,
                 limit = 20,
@@ -62,37 +63,70 @@ router.get('/',
             
             let query = `
                 SELECT 
-                    rs.*,
-                    (SELECT COUNT(*) FROM report_versions rv WHERE rv.report_id = rs.id) as version_count
-                FROM report_summary rs
+                    r.id,
+                    r.study_instance_uid,
+                    r.patient_id,
+                    r.patient_name,
+                    r.study_date,
+                    r.study_description,
+                    r.modality,
+                    r.doctor_id,
+                    u.name AS doctor_name,
+                    r.created_at,
+                    r.updated_at,
+                    r.finalized_at,
+                    r.tags,
+                    COALESCE(rv.version_count, 0) AS version_count,
+                    (r.finalized_at IS NOT NULL) AS is_finalized,
+                    COUNT(*) OVER() AS total_count
+                FROM reports r
+                LEFT JOIN users u ON u.id = r.doctor_id
+                LEFT JOIN (
+                    SELECT report_id, COUNT(*)::int AS version_count
+                    FROM report_versions
+                    GROUP BY report_id
+                ) rv ON rv.report_id = r.id
             `;
             
             const conditions = [];
             const values = [];
             let paramCount = 0;
 
+            const normalizedStatus = (() => {
+                if (!status) {
+                    if (finalized_only) return 'finalized';
+                    if (draft_only) return 'draft';
+                    return null;
+                }
+                const lowered = status.toString().toLowerCase();
+                if (lowered === 'all') return null;
+                if (['finalized', 'completed'].includes(lowered)) return 'finalized';
+                if (lowered === 'draft') return 'draft';
+                return null;
+            })();
+
             // Role-based filtering
             if (['researcher', 'observer'].includes(req.user.role)) {
                 // Read-only roles only see finalized reports regardless of filters
-                conditions.push('rs.is_finalized = true');
+                conditions.push('r.finalized_at IS NOT NULL');
             }
 
             if (patient_id) {
                 paramCount++;
-                conditions.push(`rs.patient_id ILIKE $${paramCount}`);
+                conditions.push(`r.patient_id ILIKE $${paramCount}`);
                 values.push(`%${patient_id}%`);
             }
 
             if (patient_name) {
                 paramCount++;
-                conditions.push(`rs.patient_name ILIKE $${paramCount}`);
+                conditions.push(`r.patient_name ILIKE $${paramCount}`);
                 values.push(`%${patient_name}%`);
             }
 
             if (study_instance_uid) {
                 paramCount++;
                 // Partial matching for Study Instance UID
-                conditions.push(`rs.study_instance_uid ILIKE $${paramCount}`);
+                conditions.push(`r.study_instance_uid ILIKE $${paramCount}`);
                 values.push(`%${study_instance_uid}%`);
             }
 
@@ -101,34 +135,34 @@ router.get('/',
             const reportsDateTo = report_date_to || study_date_to;
             if (reportsDateFrom) {
                 paramCount++;
-                conditions.push(`rs.created_at::date >= $${paramCount}::date`);
+                conditions.push(`r.created_at::date >= $${paramCount}::date`);
                 values.push(reportsDateFrom);
             }
 
             if (reportsDateTo) {
                 paramCount++;
-                conditions.push(`rs.created_at::date <= $${paramCount}::date`);
+                conditions.push(`r.created_at::date <= $${paramCount}::date`);
                 values.push(reportsDateTo);
             }
 
             if (modality) {
                 paramCount++;
-                conditions.push(`rs.modality = $${paramCount}`);
+                conditions.push(`r.modality = $${paramCount}`);
                 values.push(modality);
             }
 
             if (doctor_id) {
                 paramCount++;
-                conditions.push(`rs.doctor_id = $${paramCount}`);
+                conditions.push(`r.doctor_id = $${paramCount}`);
                 values.push(doctor_id);
             }
 
             // Finalization status filtering (doctor/admin only)
-            if (!['researcher', 'observer'].includes(req.user.role)) {
-                if (finalized_only) {
-                    conditions.push('rs.is_finalized = true');
-                } else if (draft_only) {
-                    conditions.push('rs.is_finalized = false');
+            if (!['researcher', 'observer'].includes(req.user.role) && normalizedStatus) {
+                if (normalizedStatus === 'finalized') {
+                    conditions.push('r.finalized_at IS NOT NULL');
+                } else if (normalizedStatus === 'draft') {
+                    conditions.push('r.finalized_at IS NULL');
                 }
             }
 
@@ -136,7 +170,7 @@ router.get('/',
                 query += ' WHERE ' + conditions.join(' AND ');
             }
 
-            query += ' ORDER BY rs.created_at DESC';
+            query += ' ORDER BY r.created_at DESC';
 
             paramCount++;
             query += ` LIMIT $${paramCount}`;
@@ -147,25 +181,86 @@ router.get('/',
             values.push(parseInt(offset));
 
             const result = await db.query(query, values);
+            const reports = result.rows.map((row) => {
+                const {
+                    total_count,
+                    ...report
+                } = row;
+                const statusValue = report.is_finalized ? 'finalized' : 'draft';
+                return {
+                    ...report,
+                    status: statusValue,
+                    title: report.study_description
+                        ? report.study_description
+                        : `Report for ${report.patient_name || report.patient_id}`,
+                    description: report.study_description || null,
+                    total_count
+                };
+            });
 
+            const total = reports.length > 0 ? Number(reports[0].total_count ?? reports.length) : 0;
             await createAuditLog(req.user.id, 'reports_listed', 'report', null, {
                 filters: req.query,
-                count: result.rows.length,
+                count: reports.length,
                 ip: req.ip,
                 user_agent: req.get('User-Agent')
             });
 
             res.json({
-                reports: result.rows,
+                reports: reports.map(({ total_count, ...rest }) => rest),
                 pagination: {
                     limit: parseInt(limit),
                     offset: parseInt(offset),
-                    total: result.rows.length
+                    total
                 }
             });
         } catch (error) {
             logger.error('Get reports error:', error);
             res.status(500).json({ error: 'Failed to retrieve reports' });
+        }
+    }
+);
+
+// Summary metrics for reports landing experience
+router.get('/summary',
+    requireAnyRole(['admin', 'doctor', 'researcher', 'observer']),
+    async (req, res) => {
+        try {
+            const db = getDB();
+            const role = req.user.role;
+            const normalize = (value) => Number(value) || 0;
+
+            if (['admin', 'doctor'].includes(role)) {
+                const summaryRes = await db.query(`
+                    SELECT 
+                        COUNT(*)::int AS total_reports,
+                        COUNT(*) FILTER (WHERE finalized_at IS NULL)::int AS draft_reports,
+                        COUNT(*) FILTER (WHERE finalized_at IS NOT NULL)::int AS finalized_reports
+                    FROM reports
+                `);
+                const row = summaryRes.rows[0] || {};
+                return res.json({
+                    total_reports: normalize(row.total_reports),
+                    draft_reports: normalize(row.draft_reports),
+                    finalized_reports: normalize(row.finalized_reports)
+                });
+            }
+
+            const finalizedRes = await db.query(`
+                SELECT 
+                    COUNT(*)::int AS finalized_reports
+                FROM reports
+                WHERE finalized_at IS NOT NULL
+            `);
+            const finalized = normalize(finalizedRes.rows[0]?.finalized_reports);
+            return res.json({
+                total_reports: finalized,
+                draft_reports: 0,
+                finalized_reports: finalized
+            });
+        } catch (error) {
+            logger.error('Get reports summary error:', error);
+            res.status(500).json({ error: 'Failed to retrieve reports summary' });
         }
     }
 );
