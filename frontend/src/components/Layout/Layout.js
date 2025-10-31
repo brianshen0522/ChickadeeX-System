@@ -141,17 +141,6 @@ const Layout = ({ children }) => {
   const isAdmin = user?.role === 'admin';
   const isObserver = user?.role === 'observer';
 
-  // Lock body scroll for better UX
-  useEffect(() => {
-    document.body.style.overflow = 'hidden';
-    document.body.style.height = '100vh';
-    
-    return () => {
-      document.body.style.overflow = '';
-      document.body.style.height = '';
-    };
-  }, []);
-
   useEffect(() => {
     const handleClickAway = (event) => {
       const target = event.target;
@@ -173,6 +162,12 @@ const Layout = ({ children }) => {
     setProfileOpen(false);
     setStatusMenuOpen(false);
   }, [location.pathname, location.search]);
+
+  useEffect(() => {
+    if (isObserver) {
+      setStatusMenuOpen(false);
+    }
+  }, [isObserver]);
 
   const mainOffset = isCollapsed ? 'md:ml-20' : 'md:ml-60';
   const layoutBackground = isAdmin ? 'bg-neutral-50' : 'bg-slate-100';
@@ -326,40 +321,42 @@ const Layout = ({ children }) => {
                     {hasAdditionalRoles && <ChevronDown className="h-3 w-3" />}
                   </button>
                 )}
-                <div ref={desktopStatusRef} className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setStatusMenuOpen((prev) => !prev)}
-                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold tracking-wide shadow-sm transition ${pacsColors.border} ${pacsColors.bg} ${pacsColors.text} hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2`}
-                    title={pacsTitle}
-                    aria-expanded={statusMenuOpen}
-                  >
-                    {pacsStatusMeta.icon}
-                    <span>PACS</span>
-                  </button>
-                  {statusMenuOpen && (
-                    <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white shadow-lg">
-                      <div className="px-4 py-3 text-sm text-slate-700">
-                        <p className="font-semibold text-slate-800">PACS Status</p>
-                        <p className="mt-1 text-xs text-slate-500">{pacsHealth.message}</p>
-                        {pacsHealth.responseTime && (
-                          <p className="mt-2 text-xs text-slate-400">Latency: {pacsHealth.responseTime}ms</p>
-                        )}
+                {!isObserver && (
+                  <div ref={desktopStatusRef} className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setStatusMenuOpen((prev) => !prev)}
+                      className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold tracking-wide shadow-sm transition ${pacsColors.border} ${pacsColors.bg} ${pacsColors.text} hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2`}
+                      title={pacsTitle}
+                      aria-expanded={statusMenuOpen}
+                    >
+                      {pacsStatusMeta.icon}
+                      <span>PACS</span>
+                    </button>
+                    {statusMenuOpen && (
+                      <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white shadow-lg">
+                        <div className="px-4 py-3 text-sm text-slate-700">
+                          <p className="font-semibold text-slate-800">PACS Status</p>
+                          <p className="mt-1 text-xs text-slate-500">{pacsHealth.message}</p>
+                          {pacsHealth.responseTime && (
+                            <p className="mt-2 text-xs text-slate-400">Latency: {pacsHealth.responseTime}ms</p>
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setStatusMenuOpen(false);
+                            navigate('/admin/pacs-settings');
+                          }}
+                          className="flex w-full items-center justify-between border-t border-slate-200 px-4 py-2 text-sm text-primary-600 transition hover:bg-primary-50"
+                        >
+                          Open PACS Settings
+                          <ChevronRight className="h-4 w-4" />
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStatusMenuOpen(false);
-                          navigate('/admin/pacs-settings');
-                        }}
-                        className="flex w-full items-center justify-between border-t border-slate-200 px-4 py-2 text-sm text-primary-600 transition hover:bg-primary-50"
-                      >
-                        Open PACS Settings
-                        <ChevronRight className="h-4 w-4" />
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
               </div>
               <div ref={desktopProfileRef} className="relative">
                 <button
@@ -424,49 +421,51 @@ const Layout = ({ children }) => {
               <span className={`text-sm font-semibold tracking-wide ${logoAccent}`}>ChickadeeX</span>
             </Link>
             <div className="flex items-center gap-2">
-              <div ref={mobileStatusRef} className="relative">
-                <button
-                  type="button"
-                  onClick={() => setStatusMenuOpen((prev) => !prev)}
-                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
-                  aria-expanded={statusMenuOpen}
-                  title="Workspace & system status"
-                >
-                  {pacsStatusMeta.icon}
-                  Status
-                  {statusMenuOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
-                </button>
-                {statusMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white shadow-lg">
-                    {roleLabel && (
-                      <div className="border-b border-slate-200 px-4 py-3 text-sm">
-                        <p className="font-semibold text-slate-800">Workspace</p>
-                        <p className="mt-1 inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold uppercase tracking-wide">
-                          {roleLabel}
-                        </p>
-                      </div>
-                    )}
-                    <div className="px-4 py-3 text-sm text-slate-700">
-                      <p className="font-semibold text-slate-800">PACS Status</p>
-                      <p className="mt-1 text-xs text-slate-500">{pacsHealth.message}</p>
-                      {pacsHealth.responseTime && (
-                        <p className="mt-2 text-xs text-slate-400">Latency: {pacsHealth.responseTime}ms</p>
+              {!isObserver && (
+                <div ref={mobileStatusRef} className="relative">
+                  <button
+                    type="button"
+                    onClick={() => setStatusMenuOpen((prev) => !prev)}
+                    className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-semibold text-slate-700 shadow-sm transition focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
+                    aria-expanded={statusMenuOpen}
+                    title="Workspace & system status"
+                  >
+                    {pacsStatusMeta.icon}
+                    Status
+                    {statusMenuOpen ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  </button>
+                  {statusMenuOpen && (
+                    <div className="absolute right-0 mt-2 w-56 rounded-md border border-slate-200 bg-white shadow-lg">
+                      {roleLabel && (
+                        <div className="border-b border-slate-200 px-4 py-3 text-sm">
+                          <p className="font-semibold text-slate-800">Workspace</p>
+                          <p className="mt-1 inline-flex items-center rounded-full border px-2 py-1 text-xs font-semibold uppercase tracking-wide">
+                            {roleLabel}
+                          </p>
+                        </div>
                       )}
+                      <div className="px-4 py-3 text-sm text-slate-700">
+                        <p className="font-semibold text-slate-800">PACS Status</p>
+                        <p className="mt-1 text-xs text-slate-500">{pacsHealth.message}</p>
+                        {pacsHealth.responseTime && (
+                          <p className="mt-2 text-xs text-slate-400">Latency: {pacsHealth.responseTime}ms</p>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStatusMenuOpen(false);
+                          navigate('/admin/pacs-settings');
+                        }}
+                        className="flex w-full items-center justify-between border-t border-slate-200 px-4 py-2 text-sm text-primary-600 transition hover:bg-primary-50"
+                      >
+                        Open PACS Settings
+                        <ChevronRight className="h-4 w-4" />
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setStatusMenuOpen(false);
-                        navigate('/admin/pacs-settings');
-                      }}
-                      className="flex w-full items-center justify-between border-t border-slate-200 px-4 py-2 text-sm text-primary-600 transition hover:bg-primary-50"
-                    >
-                      Open PACS Settings
-                      <ChevronRight className="h-4 w-4" />
-                    </button>
-                  </div>
-                )}
-              </div>
+                  )}
+                </div>
+              )}
               <div ref={mobileProfileRef} className="relative">
                 <button
                   type="button"

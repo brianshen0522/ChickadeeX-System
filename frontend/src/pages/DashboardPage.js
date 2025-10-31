@@ -176,15 +176,13 @@ const DashboardPage = () => {
           items: [
             {
               name: 'Demo',
-              description: 'Interactive demo workspace with BlueLight viewer for reviewing sample medical images.',
               icon: Activity,
               to: '/demo',
-              cta: 'Launch Demo',
+              cta: 'Try it',
               primary: true
             },
             {
               name: 'Reports',
-              description: 'View draft and finalized medical reports. Browse studies and export signed reports.',
               icon: FileText,
               to: '/reports',
               cta: 'Open Reports',
@@ -375,7 +373,9 @@ const DashboardPage = () => {
                       </div>
                       <div className="space-y-2">
                         <h3 className="text-xl font-bold text-slate-800">{item.name}</h3>
-                        <p className="text-slate-600 leading-relaxed">{item.description}</p>
+                        {item.description && (
+                          <p className="text-slate-600 leading-relaxed">{item.description}</p>
+                        )}
                       </div>
                       <div className="pt-2">
                         <span className="inline-flex items-center text-lg font-semibold text-primary-600 group-hover:text-primary-700 transition-colors">

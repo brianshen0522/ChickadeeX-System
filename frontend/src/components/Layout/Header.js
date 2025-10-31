@@ -1,10 +1,12 @@
 import React from 'react';
-import { Menu, Activity } from 'lucide-react';
+import { Menu } from 'lucide-react';
 import { useHealthStatus } from '../../hooks/useHealthStatus';
 import companyLogo from '../../assets/logo.svg';
+import { useAuth } from '../../contexts/AuthContext';
 
 const Header = () => {
   const { systemHealth, pacsHealth } = useHealthStatus();
+  const { user } = useAuth();
 
   const getStatusColors = (health) => {
     if (health.healthy) {
@@ -24,7 +26,9 @@ const Header = () => {
     }
   };
 
+  const role = (user?.role || '').toLowerCase();
   const pacsColors = getStatusColors(pacsHealth);
+  const shouldShowPacs = role !== 'observer';
   
   return (
     <div className="relative z-10 flex-shrink-0 flex h-16 bg-gradient-to-r from-primary-50 to-medical-off-white shadow-medical border-b border-primary-200">
@@ -59,15 +63,17 @@ const Header = () => {
           </div>
           
           {/* PACS Health Status - Real API Check */}
-          <div className={`flex items-center space-x-2 px-3 py-2 ${pacsColors.bg} border ${pacsColors.border} rounded-medical shadow-soft`}>
-            <div className={`w-2 h-2 ${pacsColors.dot} rounded-full ${pacsHealth.healthy ? 'animate-pulse' : ''}`}></div>
-            <span className={`text-xs font-medium ${pacsColors.text}`}>
-              {pacsHealth.message}
-              {pacsHealth.responseTime && pacsHealth.healthy && (
-                <span className="ml-1 opacity-75">({pacsHealth.responseTime}ms)</span>
-              )}
-            </span>
-          </div>
+          {shouldShowPacs && (
+            <div className={`flex items-center space-x-2 px-3 py-2 ${pacsColors.bg} border ${pacsColors.border} rounded-medical shadow-soft`}>
+              <div className={`w-2 h-2 ${pacsColors.dot} rounded-full ${pacsHealth.healthy ? 'animate-pulse' : ''}`}></div>
+              <span className={`text-xs font-medium ${pacsColors.text}`}>
+                {pacsHealth.message}
+                {pacsHealth.responseTime && pacsHealth.healthy && (
+                  <span className="ml-1 opacity-75">({pacsHealth.responseTime}ms)</span>
+                )}
+              </span>
+            </div>
+          )}
         </div>
       </div>
     </div>
