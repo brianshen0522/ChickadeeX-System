@@ -106,9 +106,19 @@ router.get('/',
             })();
 
             // Role-based filtering
-            if (['researcher', 'observer'].includes(req.user.role)) {
-                // Read-only roles only see finalized reports regardless of filters
+            if (req.user.role === 'researcher') {
+                // Researchers continue to see finalized reports only
                 conditions.push('r.finalized_at IS NOT NULL');
+            } else if (req.user.role === 'observer') {
+                paramCount++;
+                conditions.push(`r.doctor_id = $${paramCount}`);
+                values.push(req.user.id);
+            }
+
+            if (req.user.role === 'doctor') {
+                paramCount++;
+                conditions.push(`r.doctor_id = $${paramCount}`);
+                values.push(req.user.id);
             }
 
             if (patient_id) {
@@ -158,7 +168,8 @@ router.get('/',
             }
 
             // Finalization status filtering (doctor/admin only)
-            if (!['researcher', 'observer'].includes(req.user.role) && normalizedStatus) {
+            const restrictStatusForRole = req.user.role === 'researcher';
+            if (!restrictStatusForRole && normalizedStatus) {
                 if (normalizedStatus === 'finalized') {
                     conditions.push('r.finalized_at IS NOT NULL');
                 } else if (normalizedStatus === 'draft') {
@@ -166,21 +177,97 @@ router.get('/',
                 }
             }
 
-            if (conditions.length > 0) {
-                query += ' WHERE ' + conditions.join(' AND ');
+            const whereClause = conditions.length > 0
+                ? 'WHERE ' + conditions.join(' AND ')
+                : '';
+
+            const limitIndex = ++paramCount;
+            values.push(parseInt(limit, 10));
+
+            const offsetIndex = ++paramCount;
+            values.push(parseInt(offset, 10));
+
+            const buildListQuery = ({ includeTags = true, includeVersions = true } = {}) => {
+                const columns = [
+                    'r.id',
+                    'r.study_instance_uid',
+                    'r.patient_id',
+                    'r.patient_name',
+                    'r.study_date',
+                    'r.study_description',
+                    'r.modality',
+                    'r.doctor_id',
+                    'u.name AS doctor_name',
+                    'r.created_at',
+                    'r.updated_at',
+                    'r.finalized_at'
+                ];
+
+                columns.push(includeTags ? 'r.tags' : `'{}'::text[] AS tags`);
+
+                columns.push(
+                    includeVersions ? 'COALESCE(rv.version_count, 0) AS version_count' : '0::int AS version_count',
+                    '(r.finalized_at IS NOT NULL) AS is_finalized',
+                    'COUNT(*) OVER() AS total_count'
+                );
+
+                let queryText = `
+                    SELECT 
+                        ${columns.join(',\n                        ')}
+                    FROM reports r
+                    LEFT JOIN users u ON u.id = r.doctor_id
+                `;
+
+                if (includeVersions) {
+                    queryText += `
+                    LEFT JOIN (
+                        SELECT report_id, COUNT(*)::int AS version_count
+                        FROM report_versions
+                        GROUP BY report_id
+                    ) rv ON rv.report_id = r.id`;
+                }
+
+                if (whereClause) {
+                    queryText += `\n${whereClause}`;
+                }
+
+                queryText += `
+                    ORDER BY r.created_at DESC
+                    LIMIT $${limitIndex}
+                    OFFSET $${offsetIndex}
+                `;
+
+                return queryText;
+            };
+
+            const executeQuery = async (queryText) => {
+                return db.query(queryText, values);
+            };
+
+            let result;
+            try {
+                result = await executeQuery(buildListQuery({ includeTags: true, includeVersions: true }));
+            } catch (error) {
+                if (error.code === '42703') {
+                    logger.warn('Reports list query missing extended columns, retrying without optional fields');
+                    try {
+                        result = await executeQuery(buildListQuery({ includeTags: false, includeVersions: true }));
+                    } catch (nestedError) {
+                        if (nestedError.code === '42P01') {
+                            logger.warn('Report versions table missing, retrying without version counts');
+                            result = await executeQuery(buildListQuery({ includeTags: false, includeVersions: false }));
+                        } else {
+                            throw nestedError;
+                        }
+                    }
+                } else if (error.code === '42P01') {
+                    logger.warn('Report versions table missing, retrying without version counts');
+                    result = await executeQuery(buildListQuery({ includeTags: true, includeVersions: false }));
+                } else {
+                    throw error;
+                }
             }
 
-            query += ' ORDER BY r.created_at DESC';
-
-            paramCount++;
-            query += ` LIMIT $${paramCount}`;
-            values.push(parseInt(limit));
-
-            paramCount++;
-            query += ` OFFSET $${paramCount}`;
-            values.push(parseInt(offset));
-
-            const result = await db.query(query, values);
             const reports = result.rows.map((row) => {
                 const {
                     total_count,

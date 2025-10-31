@@ -9,7 +9,6 @@ import {
   Save,
   Clipboard,
   ClipboardCheck,
-  GitCompare,
   FileImage,
   Film,
   LayoutList
@@ -24,62 +23,6 @@ import {
   saveReportVersion,
   getUploadReport
 } from '../services/uploadService';
-
-const computeLineDiff = (baseText = '', currentText = '') => {
-  const baseLines = baseText.split(/\r?\n/);
-  const currentLines = currentText.split(/\r?\n/);
-  const diffs = [];
-  let i = 0;
-  let j = 0;
-
-  while (i < baseLines.length || j < currentLines.length) {
-    const baseLine = i < baseLines.length ? baseLines[i] : null;
-    const currentLine = j < currentLines.length ? currentLines[j] : null;
-
-    if (baseLine !== null && currentLine !== null && baseLine === currentLine) {
-      diffs.push({ type: 'same', text: currentLine });
-      i += 1;
-      j += 1;
-      continue;
-    }
-
-    if (currentLine !== null && baseLines.slice(i + 1).includes(currentLine)) {
-      if (baseLine !== null) {
-        diffs.push({ type: 'removed', text: baseLine });
-        i += 1;
-        continue;
-      }
-    }
-
-    if (baseLine !== null && currentLines.slice(j + 1).includes(baseLine)) {
-      if (currentLine !== null) {
-        diffs.push({ type: 'added', text: currentLine });
-        j += 1;
-        continue;
-      }
-    }
-
-    if (baseLine !== null && currentLine !== null) {
-      diffs.push({ type: 'removed', text: baseLine });
-      diffs.push({ type: 'added', text: currentLine });
-      i += 1;
-      j += 1;
-      continue;
-    }
-
-    if (baseLine !== null) {
-      diffs.push({ type: 'removed', text: baseLine });
-      i += 1;
-    }
-
-    if (currentLine !== null) {
-      diffs.push({ type: 'added', text: currentLine });
-      j += 1;
-    }
-  }
-
-  return diffs;
-};
 
 const formatTimestamp = (timestamp, fallback = '--') => {
   if (!timestamp) return fallback;
@@ -131,7 +74,6 @@ const UploadViewerPage = () => {
     findings: false,
     impression: false
   });
-  const [isDiffMode, setIsDiffMode] = useState(false);
   const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
   const uploadDropdownRef = useRef(null);
 
@@ -167,18 +109,10 @@ const UploadViewerPage = () => {
   }, [selectedUpload]);
 
   const versionsSorted = useMemo(() => {
-    return [...reportState.versions].sort((a, b) => a.version_no - b.version_no);
+    return [...reportState.versions].sort((a, b) => b.version_no - a.version_no);
   }, [reportState.versions]);
 
-  const latestVersionNo = versionsSorted.length ? versionsSorted[versionsSorted.length - 1].version_no : null;
-
-  const baselineVersion = useMemo(() => {
-    if (!versionsSorted.length) return null;
-    if (reportState.activeVersion) {
-      return versionsSorted.find((version) => version.version_no === reportState.activeVersion) || null;
-    }
-    return versionsSorted[versionsSorted.length - 1];
-  }, [versionsSorted, reportState.activeVersion]);
+  const latestVersionNo = versionsSorted.length ? versionsSorted[0].version_no : null;
 
   useEffect(() => {
     if (!viewerSrc) return;
@@ -209,12 +143,6 @@ const UploadViewerPage = () => {
       { label: 'Demo', href: undefined, isCurrent: true }
     ]);
   }, [setPageTitle, setPageDescription, setBreadcrumbs]);
-
-  useEffect(() => {
-    if (!reportState.versions.length) {
-      setIsDiffMode(false);
-    }
-  }, [reportState.versions]);
 
   const refreshUploads = useCallback(async (opts = {}) => {
     setIsLoadingUploads(true);
@@ -266,7 +194,6 @@ const UploadViewerPage = () => {
 
   useEffect(() => {
     setIsUploadMenuOpen(false);
-    setIsDiffMode(false);
     if (!selectedUploadId) {
       setReportState((prev) => ({
         ...prev,
@@ -291,14 +218,15 @@ const UploadViewerPage = () => {
         const report = await getUploadReport(selectedUploadId);
         if (!isMounted) return;
 
-        const versions = Array.isArray(report.versions) ? report.versions : [];
-        const latest = versions.length ? versions[versions.length - 1] : null;
+        const versionsRaw = Array.isArray(report.versions) ? report.versions : [];
+        const sortedVersions = versionsRaw.sort((a, b) => b.version_no - a.version_no);
+        const latest = sortedVersions[0] || null;
 
         setReportState((prev) => ({
           ...prev,
           reportId: report.id || null,
-          versions,
-          activeVersion: latest?.version_no || null,
+          versions: sortedVersions,
+          activeVersion: latest?.version_no ?? null,
           findings: latest?.findings || '',
           impression: latest?.impression || '',
           hasUnsavedChanges: false,
@@ -417,7 +345,7 @@ const UploadViewerPage = () => {
   const upsertVersionLocally = (version) => {
     setReportState((prev) => {
       const existing = prev.versions.filter((v) => v.version_no !== version.version_no);
-      const versions = [...existing, version].sort((a, b) => a.version_no - b.version_no);
+      const versions = [...existing, version].sort((a, b) => b.version_no - a.version_no);
       return {
         ...prev,
         versions,
@@ -428,7 +356,6 @@ const UploadViewerPage = () => {
         lastSavedAt: version.created_at ? new Date(version.created_at) : new Date()
       };
     });
-    setIsDiffMode(false);
   };
 
   const handleGenerate = async () => {
@@ -445,34 +372,15 @@ const UploadViewerPage = () => {
       const findings = Array.isArray(result.findings) ? result.findings.join('\n') : (result.findings || '');
       const impression = Array.isArray(result.impression) ? result.impression.join('\n') : (result.impression || '');
 
-      let reportId = reportState.reportId;
-      if (!reportId) {
-        reportId = await ensureReportExists();
-      }
-
-      try {
-        const saved = await saveReportVersion(selectedUpload.id, reportId, { findings, impression });
-        setReportState((prev) => ({
-          ...prev,
-          isGenerating: false,
-          reportId,
-          error: null
-        }));
-        upsertVersionLocally(saved);
-        toast.success('AI report generated and saved');
-      } catch (saveError) {
-        console.error('Auto-save after generation failed:', saveError);
-        setReportState((prev) => ({
-          ...prev,
-          isGenerating: false,
-          reportId,
-          findings,
-          impression,
-          hasUnsavedChanges: true,
-          error: 'AI report generated. Save to persist.'
-        }));
-        toast.success('AI report generated (remember to save).');
-      }
+      setReportState((prev) => ({
+        ...prev,
+        isGenerating: false,
+        findings,
+        impression,
+        hasUnsavedChanges: true,
+        error: null
+      }));
+      toast.success('AI draft generated. Click Save to create a version.');
     } catch (error) {
       setReportState((prev) => ({ ...prev, isGenerating: false, error: 'Failed to generate AI report' }));
       toast.error('Failed to generate AI report');
@@ -534,7 +442,6 @@ const UploadViewerPage = () => {
         ...prev,
         activeVersion: null
       }));
-      setIsDiffMode(false);
       return;
     }
 
@@ -550,7 +457,6 @@ const UploadViewerPage = () => {
       impression: version.impression || '',
       hasUnsavedChanges: false
     }));
-    setIsDiffMode(false);
   };
 
   const handleCopy = async (field) => {
@@ -564,18 +470,6 @@ const UploadViewerPage = () => {
         setCopiedStates((prev) => ({ ...prev, [field]: false }));
       }, 1800);
       toast.success(`${field === 'findings' ? 'Findings' : 'Impression'} copied`);
-    } catch (error) {
-      toast.error('Copy failed');
-      console.error('Clipboard write failed:', error);
-    }
-  };
-
-  const handleCopyFullReport = async () => {
-    const content = `Findings:\n${reportState.findings || ''}\n\nImpression:\n${reportState.impression || ''}`.trim();
-    if (!content) return;
-    try {
-      await navigator.clipboard.writeText(content);
-      toast.success('Report copied');
     } catch (error) {
       toast.error('Copy failed');
       console.error('Clipboard write failed:', error);
@@ -714,38 +608,6 @@ const UploadViewerPage = () => {
   };
 
   const renderReportPanel = () => {
-    const renderDiffBlock = (title, baseText, currentText) => {
-      if (!baselineVersion) return null;
-      const diff = computeLineDiff(baseText, currentText);
-
-      return (
-        <div className="rounded-lg border border-slate-200 bg-slate-50 p-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{title}</span>
-            <span className="text-[0.65rem] text-slate-400">Baseline v{baselineVersion.version_no}</span>
-          </div>
-          <div className="space-y-1 font-mono text-[0.75rem] leading-relaxed">
-            {diff.map((line, index) => {
-              const prefix = line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' ';
-              const colorClass =
-                line.type === 'added'
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-100'
-                  : line.type === 'removed'
-                    ? 'bg-rose-50 text-rose-700 border border-rose-100'
-                    : 'text-slate-600';
-
-              return (
-                <div key={`${title}-${index}`} className={`rounded px-2 py-1 ${colorClass}`}>
-                  <span className="mr-2 text-xs font-semibold">{prefix}</span>
-                  {line.text || ' '}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      );
-    };
-
     return (
       <aside className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
         <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3">
@@ -754,18 +616,19 @@ const UploadViewerPage = () => {
             <select
               value={reportState.activeVersion != null ? String(reportState.activeVersion) : ''}
               onChange={handleVersionChange}
-              className="h-8 min-w-[140px] rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              disabled={!versionsSorted.length}
+              className="h-8 min-w-[160px] rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              disabled={!versionsSorted.length && !reportState.hasUnsavedChanges}
             >
-              <option value="">
-                {versionsSorted.length ? `v${latestVersionNo} (latest)` : 'No versions yet'}
-              </option>
+              {(reportState.hasUnsavedChanges || !versionsSorted.length) && (
+                <option value="">
+                  {reportState.hasUnsavedChanges ? 'Current draft (unsaved)' : 'No versions yet'}
+                </option>
+              )}
               {versionsSorted.map((version) => {
-                const labelSuffix = version.version_no === latestVersionNo ? ' (latest)' : '';
-                const timestampLabel = formatTimestamp(version.created_at);
+                const label = `v${version.version_no}${version.version_no === latestVersionNo ? ' (latest)' : ''}`;
                 return (
                   <option key={version.id} value={String(version.version_no)}>
-                    {`v${version.version_no}${labelSuffix} • ${timestampLabel}`}
+                    {label}
                   </option>
                 );
               })}
@@ -805,34 +668,8 @@ const UploadViewerPage = () => {
               )}
               Save
             </button>
-            <button
-              type="button"
-              onClick={() => setIsDiffMode((prev) => !prev)}
-              disabled={!baselineVersion}
-              className={`inline-flex h-8 items-center gap-1 rounded-md border px-3 text-xs font-semibold transition ${
-                isDiffMode ? 'border-blue-500 text-blue-600 bg-blue-50' : 'border-slate-200 text-slate-600 hover:border-blue-300 hover:text-blue-600'
-              } disabled:opacity-60`}
-            >
-              <GitCompare className="h-3.5 w-3.5" />
-              Diff
-            </button>
-            <button
-              type="button"
-              onClick={handleCopyFullReport}
-              className="inline-flex h-8 items-center gap-1 rounded-md border border-slate-200 px-3 text-xs font-semibold text-slate-600 transition hover:border-blue-300 hover:text-blue-600"
-            >
-              <Clipboard className="h-3.5 w-3.5" />
-              Copy All
-            </button>
           </div>
         </div>
-
-        {isDiffMode && baselineVersion && (
-          <div className="border-b border-slate-200 px-4 py-3 space-y-3 max-h-48 overflow-y-auto">
-            {renderDiffBlock('Findings', baselineVersion.findings || '', reportState.findings || '')}
-            {renderDiffBlock('Impression', baselineVersion.impression || '', reportState.impression || '')}
-          </div>
-        )}
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {selectedUpload && (

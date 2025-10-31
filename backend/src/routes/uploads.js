@@ -56,6 +56,7 @@ const ensureUploadsTable = async () => {
             await db.query(`CREATE INDEX IF NOT EXISTS idx_uploads_user_id ON uploads(user_id)`);
             await db.query(`CREATE INDEX IF NOT EXISTS idx_uploads_created_at ON uploads(created_at)`);
             await db.query(`CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status)`);
+            await db.query(`ALTER TABLE uploads ADD COLUMN IF NOT EXISTS study_instance_uid TEXT`);
         } catch (error) {
             uploadsTableInitPromise = null;
             logger.error('Failed to ensure uploads table exists:', error);
@@ -135,9 +136,44 @@ const selectUploadRowsWithFallback = async (db, primaryQuery, params, fallbackQu
     }
 };
 
+const createFallbackStudyInstanceUID = (uploadId) => {
+    if (!uploadId) {
+        return `1.2.276.0.7230010.3.1.2.${Date.now()}`;
+    }
+
+    const hex = uploadId.replace(/[^a-fA-F0-9]/g, '');
+    if (!hex) {
+        return `1.2.276.0.7230010.3.1.2.${Date.now()}`;
+    }
+
+    try {
+        const numeric = BigInt(`0x${hex}`).toString();
+        return `1.2.276.0.7230010.3.1.2.${numeric}`;
+    } catch (error) {
+        logger.warn('Failed to derive numeric studyInstanceUID from upload id', { uploadId, error });
+        return `1.2.276.0.7230010.3.1.2.${Date.now()}`;
+    }
+};
+
+const resolveStudyInstanceUID = ({ uploadId, dicomMetadata, storedValue }) => {
+    if (dicomMetadata?.studyInstanceUID) {
+        return String(dicomMetadata.studyInstanceUID);
+    }
+    if (typeof storedValue === 'string' && storedValue.trim().length > 0) {
+        return storedValue.trim();
+    }
+    return createFallbackStudyInstanceUID(uploadId);
+};
+
 const mapUploadRow = (row, req) => {
     const isDicom = row.is_dicom || false;
     const hasConvertedImage = row.converted_image_path;
+    const dicomMetadata = parseDicomMetadata(row.dicom_metadata);
+    const studyInstanceUID = resolveStudyInstanceUID({
+        uploadId: row.id,
+        dicomMetadata,
+        storedValue: row.study_instance_uid
+    });
 
     // For DICOM files with converted images, use the converted image for display
     // For regular images, use the original file
@@ -168,7 +204,8 @@ const mapUploadRow = (row, req) => {
         thumbnailPath: row.thumbnail_key
             ? `${req.protocol}://${req.get('host')}/api/uploads/${row.id}/thumbnail`
             : null,
-        dicomMetadata: parseDicomMetadata(row.dicom_metadata)
+        dicomMetadata,
+        studyInstanceUID
     };
 };
 
@@ -195,6 +232,7 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     let convertedImagePath = null;
     let dicomMetadata = null;
+    let studyInstanceUID = null;
 
     try {
         // Handle DICOM conversion
@@ -217,22 +255,69 @@ router.post('/', upload.single('file'), async (req, res) => {
             }
         }
 
-        await db.query(
-            `INSERT INTO uploads (id, user_id, stored_filename, original_filename, mime_type, file_size, modality, status, source, converted_image_path, dicom_metadata, is_dicom, updated_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready', 'upload', $8, $9, $10, CURRENT_TIMESTAMP)`,
-            [
-                uploadId,
-                req.user.id,
-                storedRelativePath,
-                req.file.originalname,
-                mimeType,
-                req.file.size,
-                req.body.modality || null,
-                convertedImagePath,
-                dicomMetadata ? JSON.stringify(dicomMetadata) : null,
-                isDicom
-            ]
-        );
+        const resolvedMetadata = dicomMetadata ? JSON.stringify(dicomMetadata) : null;
+        studyInstanceUID = resolveStudyInstanceUID({
+            uploadId,
+            dicomMetadata,
+            storedValue: null
+        });
+
+        let insertedRow;
+        try {
+            const insertResult = await db.query(
+                `INSERT INTO uploads (id, user_id, stored_filename, original_filename, mime_type, file_size, modality, status, source, converted_image_path, dicom_metadata, is_dicom, study_instance_uid, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready', 'upload', $8, $9, $10, $11, CURRENT_TIMESTAMP)
+                 RETURNING id, original_filename, mime_type, file_size, modality, created_at, status, thumbnail_key, converted_image_path, is_dicom, dicom_metadata, study_instance_uid`,
+                [
+                    uploadId,
+                    req.user.id,
+                    storedRelativePath,
+                    req.file.originalname,
+                    mimeType,
+                    req.file.size,
+                    req.body.modality || null,
+                    convertedImagePath,
+                    resolvedMetadata,
+                    isDicom,
+                    studyInstanceUID
+                ]
+            );
+            insertedRow = insertResult.rows[0];
+        } catch (error) {
+            if (error.code !== '42703') {
+                throw error;
+            }
+
+            logger.warn('Uploads table missing extended columns, using legacy insert');
+            const legacyResult = await db.query(
+                `INSERT INTO uploads (id, user_id, stored_filename, original_filename, mime_type, file_size, status, source, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, 'ready', 'upload', CURRENT_TIMESTAMP)
+                 RETURNING id, original_filename, mime_type, file_size, created_at, status`,
+                [
+                    uploadId,
+                    req.user.id,
+                    storedRelativePath,
+                    req.file.originalname,
+                    mimeType,
+                    req.file.size
+                ]
+            );
+            const legacyRow = legacyResult.rows[0];
+            insertedRow = {
+                ...legacyRow,
+                modality: req.body.modality || null,
+                thumbnail_key: null,
+                converted_image_path: null,
+                is_dicom: isDicom,
+                dicom_metadata: resolvedMetadata,
+                study_instance_uid: studyInstanceUID
+            };
+            if (convertedImagePath) {
+                const convertedFullPath = path.join(UPLOAD_ROOT, convertedImagePath);
+                fs.unlink(convertedFullPath, () => {});
+            }
+            convertedImagePath = null; // ensure downstream references are accurate
+        }
 
         await createAuditLog(req.user.id, 'upload_created', 'upload', uploadId, {
             original_filename: req.file.originalname,
@@ -244,20 +329,7 @@ router.post('/', upload.single('file'), async (req, res) => {
             user_agent: req.get('User-Agent')
         });
 
-        const row = {
-            id: uploadId,
-            original_filename: req.file.originalname,
-            mime_type: mimeType,
-            file_size: req.file.size,
-            modality: req.body.modality || null,
-            created_at: new Date(),
-            status: 'ready',
-            thumbnail_key: null,
-            converted_image_path: convertedImagePath,
-            is_dicom: isDicom
-        };
-
-        res.status(201).json(mapUploadRow(row, req));
+        res.status(201).json(mapUploadRow(insertedRow, req));
     } catch (error) {
         logger.error('Upload save failed:', error);
 
@@ -310,7 +382,7 @@ router.get('/', async (req, res) => {
         let rows;
         try {
             const result = await db.query(
-                buildQuery('id, original_filename, mime_type, file_size, modality, created_at, status, thumbnail_key, converted_image_path, is_dicom, dicom_metadata'),
+                buildQuery('id, original_filename, mime_type, file_size, modality, created_at, status, thumbnail_key, converted_image_path, is_dicom, dicom_metadata, study_instance_uid'),
                 params
             );
             rows = result.rows;
@@ -326,7 +398,8 @@ router.get('/', async (req, res) => {
                     thumbnail_key: row.thumbnail_key || null,
                     converted_image_path: null,
                     is_dicom: row.is_dicom || false,
-                    dicom_metadata: row.dicom_metadata || null
+                    dicom_metadata: row.dicom_metadata || null,
+                    study_instance_uid: row.study_instance_uid || null
                 }));
             } else {
                 throw error;
@@ -359,7 +432,7 @@ router.get('/:uploadId', async (req, res) => {
         const db = getDB();
         const rows = await selectUploadRowsWithFallback(
             db,
-            `SELECT id, original_filename, mime_type, file_size, modality, created_at, status, thumbnail_key, converted_image_path, is_dicom, dicom_metadata
+            `SELECT id, original_filename, mime_type, file_size, modality, created_at, status, thumbnail_key, converted_image_path, is_dicom, dicom_metadata, study_instance_uid
              FROM uploads
              WHERE id = $1
                AND (user_id = $2 OR $3 = 'admin')
@@ -381,7 +454,8 @@ router.get('/:uploadId', async (req, res) => {
                 thumbnail_key: null,
                 converted_image_path: null,
                 is_dicom: false,
-                dicom_metadata: null
+                dicom_metadata: null,
+                study_instance_uid: null
             })
         );
 
@@ -509,21 +583,38 @@ router.delete('/:uploadId', async (req, res) => {
 
         try {
             // Get file information before deletion
-            const getResult = await db.query(
+            const uploadRows = await selectUploadRowsWithFallback(
+                db,
                 `SELECT stored_filename, original_filename, converted_image_path, is_dicom, status
                  FROM uploads
                  WHERE id = $1
                    AND user_id = $2
                    AND status = 'ready'`,
-                [req.params.uploadId, req.user.id]
+                [req.params.uploadId, req.user.id],
+                `SELECT stored_filename, original_filename, status
+                 FROM uploads
+                 WHERE id = $1
+                   AND user_id = $2
+                   AND status = 'ready'`,
+                (row) => ({
+                    stored_filename: row.stored_filename,
+                    original_filename: row.original_filename,
+                    converted_image_path: null,
+                    is_dicom: false,
+                    status: row.status
+                })
             );
 
-            if (getResult.rows.length === 0) {
+            if (uploadRows.length === 0) {
                 await db.query('ROLLBACK');
                 return res.status(404).json({ error: 'Upload not found' });
             }
 
-            const { stored_filename, original_filename, converted_image_path, is_dicom } = getResult.rows[0];
+            const { stored_filename, original_filename, converted_image_path, is_dicom } = uploadRows[0];
+            if (!stored_filename) {
+                await db.query('ROLLBACK');
+                return res.status(404).json({ error: 'Upload file not found' });
+            }
 
             // Mark as deleted in database
             const updateResult = await db.query(
@@ -551,21 +642,15 @@ router.delete('/:uploadId', async (req, res) => {
                 filesToDelete.push(path.join(UPLOAD_ROOT, converted_image_path));
             }
 
-            // Delete files from filesystem
-            const deletionPromises = filesToDelete.map(filePath => {
-                return new Promise((resolve) => {
-                    fs.unlink(filePath, (err) => {
-                        if (err) {
-                            logger.warn(`Failed to delete file: ${filePath}`, err);
-                        } else {
-                            logger.info(`Deleted file: ${filePath}`);
-                        }
-                        resolve(); // Always resolve to not fail the transaction
-                    });
+            filesToDelete.forEach((filePath) => {
+                fs.unlink(filePath, (err) => {
+                    if (err) {
+                        logger.warn(`Failed to delete file: ${filePath}`, err);
+                    } else {
+                        logger.info(`Deleted file: ${filePath}`);
+                    }
                 });
             });
-
-            await Promise.all(deletionPromises);
 
             // Create audit log
             await createAuditLog(req.user.id, 'upload_deleted', 'upload', req.params.uploadId, {
@@ -650,7 +735,7 @@ router.post('/:uploadId/reports', async (req, res) => {
         // Get upload information
         const uploadRows = await selectUploadRowsWithFallback(
             db,
-            `SELECT id, original_filename, user_id, modality, dicom_metadata, is_dicom
+            `SELECT id, original_filename, user_id, modality, dicom_metadata, is_dicom, study_instance_uid
              FROM uploads
              WHERE id = $1
                AND user_id = $2
@@ -667,7 +752,8 @@ router.post('/:uploadId/reports', async (req, res) => {
                 user_id: row.user_id,
                 modality: row.modality || null,
                 dicom_metadata: null,
-                is_dicom: false
+                is_dicom: false,
+                study_instance_uid: null
             })
         );
 
@@ -679,14 +765,28 @@ router.post('/:uploadId/reports', async (req, res) => {
         const dicomMetadata = parseDicomMetadata(upload.dicom_metadata);
         const isDicom = upload.is_dicom || Boolean(dicomMetadata);
 
-        // Generate a study instance UID for the upload if it doesn't have one
-        const studyInstanceUID = isDicom && dicomMetadata?.studyInstanceUID
-            ? dicomMetadata.studyInstanceUID
-            : `1.2.276.0.7230010.3.1.2.${Date.now()}.${upload.id}`;
+        const studyInstanceUID = resolveStudyInstanceUID({
+            uploadId: upload.id,
+            dicomMetadata,
+            storedValue: upload.study_instance_uid
+        });
+
+        if (upload.study_instance_uid !== studyInstanceUID) {
+            try {
+                await db.query(
+                    `UPDATE uploads SET study_instance_uid = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                    [studyInstanceUID, upload.id]
+                );
+            } catch (updateError) {
+                if (updateError.code !== '42703') {
+                    logger.warn('Failed to persist study_instance_uid for upload', { uploadId: upload.id, updateError });
+                }
+            }
+        }
 
         // Check if report already exists for this study
-        const existingQuery = 'SELECT id FROM reports WHERE study_instance_uid = $1';
-        const existing = await db.query(existingQuery, [studyInstanceUID]);
+        const existingQuery = 'SELECT id FROM reports WHERE study_instance_uid = $1 AND doctor_id = $2';
+        const existing = await db.query(existingQuery, [studyInstanceUID, req.user.id]);
 
         if (existing.rows.length > 0) {
             return res.status(409).json({
@@ -838,7 +938,7 @@ router.get('/:uploadId/reports', async (req, res) => {
         // Get upload information
         const uploadRows = await selectUploadRowsWithFallback(
             db,
-            `SELECT id, original_filename, user_id, dicom_metadata, is_dicom
+            `SELECT id, original_filename, user_id, dicom_metadata, is_dicom, study_instance_uid
              FROM uploads
              WHERE id = $1
                AND user_id = $2
@@ -854,7 +954,8 @@ router.get('/:uploadId/reports', async (req, res) => {
                 original_filename: row.original_filename,
                 user_id: row.user_id,
                 dicom_metadata: null,
-                is_dicom: false
+                is_dicom: false,
+                study_instance_uid: null
             })
         );
 
@@ -866,12 +967,33 @@ router.get('/:uploadId/reports', async (req, res) => {
         const dicomMetadata = parseDicomMetadata(upload.dicom_metadata);
         const isDicom = upload.is_dicom || Boolean(dicomMetadata);
 
-        // Generate study instance UID that would be used for this upload
-        const studyInstanceUID = isDicom && dicomMetadata?.studyInstanceUID
-            ? dicomMetadata.studyInstanceUID
-            : `1.2.276.0.7230010.3.1.2.${Date.now()}.${upload.id}`;
+        const studyInstanceUID = resolveStudyInstanceUID({
+            uploadId: upload.id,
+            dicomMetadata,
+            storedValue: upload.study_instance_uid
+        });
+
+        if (upload.study_instance_uid !== studyInstanceUID) {
+            try {
+                await db.query(
+                    `UPDATE uploads SET study_instance_uid = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
+                    [studyInstanceUID, upload.id]
+                );
+            } catch (updateError) {
+                if (updateError.code !== '42703') {
+                    logger.warn('Failed to persist study_instance_uid for upload', { uploadId: upload.id, updateError });
+                }
+            }
+        }
 
         // Find report for this study
+        const params = [`%${upload.id}%`, studyInstanceUID];
+        let doctorFilter = '';
+        if (req.user.role !== 'admin') {
+            doctorFilter = ' AND rs.doctor_id = $3';
+            params.push(req.user.id);
+        }
+
         const reportQuery = `
             SELECT rs.*,
                 (SELECT json_agg(json_build_object(
@@ -883,15 +1005,16 @@ router.get('/:uploadId/reports', async (req, res) => {
                     'generated_by_ai', rv.generated_by_ai,
                     'ai_model_used', rv.ai_model_used,
                     'created_at', rv.created_at
-                ) ORDER BY rv.version_no)
+                ) ORDER BY rv.version_no DESC)
                 FROM report_versions rv WHERE rv.report_id = rs.id) as versions
             FROM report_summary rs
-            WHERE rs.study_instance_uid LIKE $1 OR rs.study_instance_uid = $2
+            WHERE (rs.study_instance_uid LIKE $1 OR rs.study_instance_uid = $2)
+            ${doctorFilter}
         `;
 
         let result;
         try {
-            result = await db.query(reportQuery, [`%${upload.id}%`, studyInstanceUID]);
+            result = await db.query(reportQuery, params);
         } catch (error) {
             if (error.code === '42P01') {
                 logger.warn('report_summary view unavailable; using fallback reports query');
@@ -909,9 +1032,10 @@ router.get('/:uploadId/reports', async (req, res) => {
                         ) ORDER BY rv.version_no)
                         FROM report_versions rv WHERE rv.report_id = r.id) as versions
                      FROM reports r
-                     WHERE r.study_instance_uid LIKE $1 OR r.study_instance_uid = $2
+                     WHERE (r.study_instance_uid LIKE $1 OR r.study_instance_uid = $2)
+                       ${req.user.role !== 'admin' ? 'AND r.doctor_id = $3' : ''}
                      ORDER BY r.created_at DESC`,
-                    [`%${upload.id}%`, studyInstanceUID]
+                    params
                 );
             } else {
                 throw error;

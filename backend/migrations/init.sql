@@ -103,6 +103,7 @@ CREATE TABLE uploads (
     converted_image_path TEXT,
     dicom_metadata JSONB,
     is_dicom BOOLEAN DEFAULT FALSE,
+    study_instance_uid TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     deleted_at TIMESTAMP

@@ -94,34 +94,47 @@ const checkReportAccess = async (req, res, next) => {
 
         const db = getDB();
         
-        // Admin and doctor can access all reports
-        if (['admin', 'doctor'].includes(userRole)) {
+        // Admin can access all reports
+        if (userRole === 'admin') {
             return next();
         }
 
-        // Check if report exists and is finalized for other roles
         const reportQuery = `
             SELECT id, finalized_at, doctor_id
-            FROM reports 
+            FROM reports
             WHERE id = $1
         `;
-        
+
         const reportResult = await db.query(reportQuery, [reportId]);
-        
+
         if (reportResult.rows.length === 0) {
             return res.status(404).json({ error: 'Report not found' });
         }
 
         const report = reportResult.rows[0];
 
-        // Researcher and observer can only access finalized reports
-        if (['researcher', 'observer'].includes(userRole)) {
+        if (userRole === 'doctor') {
+            if (report.doctor_id !== userId) {
+                return res.status(403).json({ error: 'Not authorized to access this report' });
+            }
+            return next();
+        }
+
+        if (userRole === 'researcher') {
             if (!report.finalized_at) {
                 return res.status(403).json({ error: 'Cannot access draft reports' });
             }
+            return next();
         }
 
-        next();
+        if (userRole === 'observer') {
+            if (report.doctor_id !== userId) {
+                return res.status(403).json({ error: 'Not authorized to access this report' });
+            }
+            return next();
+        }
+
+        return res.status(403).json({ error: 'Not authorized to access this report' });
     } catch (error) {
         logger.error('Report access check error:', error);
         return res.status(500).json({ error: 'Access check failed' });
