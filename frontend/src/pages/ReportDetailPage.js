@@ -38,7 +38,8 @@ const ReportDetailPage = () => {
     clinical_context: ''
   });
 
-  const canEdit = user?.role === 'doctor';
+  const canEdit = ['doctor', 'observer'].includes(user?.role);
+  const canFinalize = user?.role === 'doctor';
   const canExport = ['doctor', 'researcher'].includes(user?.role);
 
   useEffect(() => {
@@ -149,14 +150,17 @@ const ReportDetailPage = () => {
                 {!editing ? (
                   <button
                     onClick={() => {
-                      // Navigate to the BlueLight viewer page with report editing capabilities
-                      const viewerUrl = `/bluelight?StudyInstanceUID=${encodeURIComponent(report.study_instance_uid)}`;
-                      navigate(viewerUrl);
+                      if (!report.study_instance_uid) {
+                        toast.error('This report is missing a study identifier.');
+                        return;
+                      }
+                      const demoUrl = `/demo?studyUid=${encodeURIComponent(report.study_instance_uid)}`;
+                      navigate(demoUrl);
                     }}
                     className="inline-flex items-center px-3 py-1.5 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
                   >
                     <Edit className="h-4 w-4 mr-1.5" />
-                    Edit in Viewer
+                    Edit in Demo
                   </button>
                 ) : (
                   <div className="flex space-x-2">
@@ -190,7 +194,7 @@ const ReportDetailPage = () => {
                   </div>
                 )}
                 
-                {!editing && !report.finalized_at && latestVersion && (
+                {canFinalize && !editing && !report.finalized_at && latestVersion && (
                   <button
                     onClick={handleFinalize}
                     className="inline-flex items-center px-3 py-1.5 border border-green-200 text-sm font-medium rounded-lg text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"

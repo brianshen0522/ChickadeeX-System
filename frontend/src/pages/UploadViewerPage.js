@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 import { format } from 'date-fns';
 import {
@@ -46,6 +47,10 @@ const formatFileSize = (bytes) => {
 
 const UploadViewerPage = () => {
   const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
+  const [searchParams] = useSearchParams();
+  const requestedUploadId = searchParams.get('uploadId');
+  const requestedStudyUid = searchParams.get('studyUid');
+  const navigate = useNavigate();
 
   const [uploads, setUploads] = useState([]);
   const [selectedUploadId, setSelectedUploadId] = useState(null);
@@ -157,6 +162,22 @@ const UploadViewerPage = () => {
         return;
       }
 
+      if (requestedUploadId && requestedUploadId !== selectedUploadId) {
+        const matchById = items.find((item) => item.id === requestedUploadId);
+        if (matchById) {
+          setSelectedUploadId(matchById.id);
+          return;
+        }
+      }
+
+      if (requestedStudyUid) {
+        const matchByStudy = items.find((item) => item.studyInstanceUID === requestedStudyUid);
+        if (matchByStudy && matchByStudy.id !== selectedUploadId) {
+          setSelectedUploadId(matchByStudy.id);
+          return;
+        }
+      }
+
       if (opts.selectNewest) {
         setSelectedUploadId(items[0].id);
         return;
@@ -171,7 +192,7 @@ const UploadViewerPage = () => {
     } finally {
       setIsLoadingUploads(false);
     }
-  }, [selectedUploadId]);
+  }, [requestedUploadId, requestedStudyUid, selectedUploadId]);
 
   const loadMoreUploads = useCallback(async () => {
     if (!nextCursor || isLoadingMore) return;
@@ -329,6 +350,30 @@ const UploadViewerPage = () => {
         setSelectedUploadId(updated[0]?.id || null);
       }
     } catch (error) {
+      if (error.response?.status === 409) {
+        const linkedReportId = error.response.data?.reportId;
+        toast.custom((t) => (
+          <div className="max-w-sm rounded-md border border-slate-200 bg-white p-3 shadow-lg">
+            <p className="text-sm font-semibold text-slate-900">Linked report detected</p>
+            <p className="mt-1 text-xs text-slate-600">
+              Delete the associated report before removing this study from Demo.
+            </p>
+            {linkedReportId && (
+              <button
+                type="button"
+                onClick={() => {
+                  toast.dismiss(t.id);
+                  navigate(`/reports/${linkedReportId}`);
+                }}
+                className="mt-2 inline-flex items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-100 transition"
+              >
+                View linked report
+              </button>
+            )}
+          </div>
+        ), { duration: 6000 });
+        return;
+      }
       toast.error('Failed to delete upload');
       console.error('Delete failed:', error);
     }

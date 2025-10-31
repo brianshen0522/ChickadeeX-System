@@ -40,6 +40,11 @@ export const generateReportPreview = async (reportId, params = {}) => {
   return response.data;
 };
 
+export const deleteReport = async (reportId) => {
+  const response = await api.delete(`/reports/${reportId}`);
+  return response.data;
+};
+
 export const finalizeReport = async (reportId) => {
   const response = await api.post(`/reports/${reportId}/finalize`);
   return response.data;

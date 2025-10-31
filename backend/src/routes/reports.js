@@ -847,6 +847,43 @@ router.post('/:reportId/finalize',
     }
 );
 
+// Delete report (Doctor only)
+router.delete('/:reportId',
+    requireAnyRole(['doctor', 'observer', 'admin']),
+    validateParams({ reportId: schemas.uuid }),
+    async (req, res) => {
+        try {
+            const { reportId } = req.params;
+            const db = getDB();
+
+            const reportRes = await db.query(
+                `SELECT id, doctor_id FROM reports WHERE id = $1`,
+                [reportId]
+            );
+
+            if (reportRes.rows.length === 0) {
+                return res.status(404).json({ error: 'Report not found' });
+            }
+
+            if (reportRes.rows[0].doctor_id !== req.user.id && req.user.role !== 'admin') {
+                return res.status(403).json({ error: 'Not authorized to delete this report' });
+            }
+
+            await db.query('DELETE FROM reports WHERE id = $1', [reportId]);
+
+            await createAuditLog(req.user.id, 'report_deleted', 'report', reportId, {
+                ip: req.ip,
+                user_agent: req.get('User-Agent')
+            });
+
+            res.json({ message: 'Report deleted', reportId });
+        } catch (error) {
+            logger.error('Delete report error:', error);
+            res.status(500).json({ error: 'Failed to delete report' });
+        }
+    }
+);
+
 // Export report data (Researcher and Doctor only)
 router.get('/:reportId/export',
     requireAnyRole(['doctor', 'researcher']),

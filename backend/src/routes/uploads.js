@@ -585,7 +585,7 @@ router.delete('/:uploadId', async (req, res) => {
             // Get file information before deletion
             const uploadRows = await selectUploadRowsWithFallback(
                 db,
-                `SELECT stored_filename, original_filename, converted_image_path, is_dicom, status
+                `SELECT stored_filename, original_filename, converted_image_path, is_dicom, status, dicom_metadata, study_instance_uid
                  FROM uploads
                  WHERE id = $1
                    AND user_id = $2
@@ -601,7 +601,9 @@ router.delete('/:uploadId', async (req, res) => {
                     original_filename: row.original_filename,
                     converted_image_path: null,
                     is_dicom: false,
-                    status: row.status
+                    status: row.status,
+                    dicom_metadata: null,
+                    study_instance_uid: null
                 })
             );
 
@@ -610,7 +612,28 @@ router.delete('/:uploadId', async (req, res) => {
                 return res.status(404).json({ error: 'Upload not found' });
             }
 
-            const { stored_filename, original_filename, converted_image_path, is_dicom } = uploadRows[0];
+            const uploadRecord = uploadRows[0];
+            const dicomMetadata = parseDicomMetadata(uploadRecord.dicom_metadata);
+            const studyInstanceUID = resolveStudyInstanceUID({
+                uploadId: req.params.uploadId,
+                dicomMetadata,
+                storedValue: uploadRecord.study_instance_uid
+            });
+
+            const linkedReports = await db.query(
+                `SELECT id FROM reports WHERE study_instance_uid = $1 LIMIT 1`,
+                [studyInstanceUID]
+            );
+
+            if (linkedReports.rows.length > 0) {
+                await db.query('ROLLBACK');
+                return res.status(409).json({
+                    error: 'This study is linked to an existing report. Delete the report before removing the image.',
+                    reportId: linkedReports.rows[0].id
+                });
+            }
+
+            const { stored_filename, original_filename, converted_image_path, is_dicom } = uploadRecord;
             if (!stored_filename) {
                 await db.query('ROLLBACK');
                 return res.status(404).json({ error: 'Upload file not found' });
@@ -1043,7 +1066,15 @@ router.get('/:uploadId/reports', async (req, res) => {
         }
 
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'No report found for this upload' });
+            return res.json({
+                id: null,
+                study_instance_uid: studyInstanceUID,
+                upload_id: upload.id,
+                doctor_id: req.user.id,
+                patient_id: null,
+                patient_name: null,
+                versions: []
+            });
         }
 
         res.json(result.rows[0]);

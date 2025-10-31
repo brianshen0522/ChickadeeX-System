@@ -165,6 +165,34 @@ const DashboardPage = () => {
   const skeletonCount = metricCards.length || (shouldShowMetrics ? 3 : 0);
 
   const sections = useMemo(() => {
+    // Special simplified layout for observers
+    if (role === 'observer') {
+      return [
+        {
+          title: 'Available Workspaces',
+          items: [
+            {
+              name: 'Demo',
+              description: 'Interactive demo workspace with BlueLight viewer for reviewing sample medical images.',
+              icon: Activity,
+              to: '/demo',
+              cta: 'Launch Demo',
+              primary: true
+            },
+            {
+              name: 'Reports',
+              description: 'View draft and finalized medical reports. Browse studies and export signed reports.',
+              icon: FileText,
+              to: '/reports',
+              cta: 'Open Reports',
+              primary: true
+            }
+          ]
+        }
+      ];
+    }
+
+    // Original layout for other roles
     const baseSections = [
       {
         title: 'Clinical Operations',
@@ -175,7 +203,7 @@ const DashboardPage = () => {
             icon: FileText,
             to: '/reports',
             cta: 'Open Reports',
-            roles: ['admin', 'doctor', 'researcher', 'observer']
+            roles: ['admin', 'doctor', 'researcher']
           },
           {
             name: 'Studies Explorer',
@@ -254,7 +282,7 @@ const DashboardPage = () => {
             icon: UserCircle,
             to: '/profile',
             cta: 'View Profile',
-            roles: ['admin', 'doctor', 'researcher', 'observer']
+            roles: ['admin', 'doctor', 'researcher']
           },
           {
             name: 'Support & Feedback',
@@ -262,7 +290,7 @@ const DashboardPage = () => {
             icon: Settings2,
             to: '/profile',
             cta: 'Contact Support',
-            roles: ['admin', 'doctor', 'researcher', 'observer']
+            roles: ['admin', 'doctor', 'researcher']
           }
         ]
       }
@@ -312,47 +340,97 @@ const DashboardPage = () => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-        {sections.map((section) => (
-          <section
-            key={section.title}
-            className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
-          >
-            <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-              <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
-                {section.title}
-              </h2>
-              <span className="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-300">
-                {section.items.length} tools
-              </span>
-            </div>
+      {role === 'observer' ? (
+        // Special large box layout for observers
+        <div className="max-w-4xl mx-auto">
+          {sections.map((section) => (
+            <section
+              key={section.title}
+              className="rounded-2xl border border-slate-200 bg-white p-8 shadow-medical"
+            >
+              <div className="text-center mb-8">
+                <h2 className="text-2xl font-bold text-slate-800 mb-2">
+                  {section.title}
+                </h2>
+                <p className="text-slate-600">
+                  Choose from the available workspaces below
+                </p>
+              </div>
 
-            <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              {section.items.map((item) => (
-                <Link
-                  key={item.name}
-                  to={item.to}
-                  className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-medical"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary-50 text-primary-600">
-                      <item.icon className="h-5 w-5" />
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {section.items.map((item) => (
+                  <Link
+                    key={item.name}
+                    to={item.to}
+                    className="group rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-8 transition-all duration-200 hover:border-primary-300 hover:shadow-lg"
+                  >
+                    <div className="text-center space-y-4">
+                      <div className="flex justify-center">
+                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary-100 text-primary-600 group-hover:bg-primary-200 transition-colors">
+                          <item.icon className="h-8 w-8" />
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <h3 className="text-xl font-bold text-slate-800">{item.name}</h3>
+                        <p className="text-slate-600 leading-relaxed">{item.description}</p>
+                      </div>
+                      <div className="pt-2">
+                        <span className="inline-flex items-center text-lg font-semibold text-primary-600 group-hover:text-primary-700 transition-colors">
+                          {item.cta}
+                          <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
+                        </span>
+                      </div>
                     </div>
-                    <div className="space-y-1">
-                      <p className="text-sm font-semibold text-slate-800">{item.name}</p>
-                      <p className="text-xs text-slate-500">{item.description}</p>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      ) : (
+        // Original layout for other roles
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {sections.map((section) => (
+            <section
+              key={section.title}
+              className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
+            >
+              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
+                <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
+                  {section.title}
+                </h2>
+                <span className="text-[0.65rem] font-semibold uppercase tracking-widest text-slate-300">
+                  {section.items.length} tools
+                </span>
+              </div>
+
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {section.items.map((item) => (
+                  <Link
+                    key={item.name}
+                    to={item.to}
+                    className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-medical"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary-50 text-primary-600">
+                        <item.icon className="h-5 w-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm font-semibold text-slate-800">{item.name}</p>
+                        <p className="text-xs text-slate-500">{item.description}</p>
+                      </div>
                     </div>
-                  </div>
-                  <span className="mt-3 inline-flex items-center text-sm font-semibold text-primary-600 group-hover:text-primary-700">
-                    {item.cta}
-                    <ArrowRight className="ml-2 h-4 w-4" />
-                  </span>
-                </Link>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+                    <span className="mt-3 inline-flex items-center text-sm font-semibold text-primary-600 group-hover:text-primary-700">
+                      {item.cta}
+                      <ArrowRight className="ml-2 h-4 w-4" />
+                    </span>
+                  </Link>
+                ))}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

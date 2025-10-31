@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { getReports } from '../services/reportService';
-import { Search, Filter, Eye, Download, CheckCircle, Clock, User, FileText, X, BarChart3, Activity } from 'lucide-react';
+import { getReports, deleteReport } from '../services/reportService';
+import { Search, Filter, Eye, Download, CheckCircle, Clock, User, FileText, X, BarChart3, Activity, Trash2, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -32,6 +32,7 @@ const ReportsPage = () => {
     offset: 0,
     total: 0
   });
+  const [deletingId, setDeletingId] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -163,6 +164,34 @@ const ReportsPage = () => {
       toast.error('Failed to load reports');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const canDelete = ['doctor', 'observer', 'admin'].includes(user?.role);
+
+  const handleDeleteReport = async (report) => {
+    if (!canDelete) return;
+    const confirmationTitle = report.title || report.patient_name || report.patient_id || 'this report';
+    const confirmed = window.confirm(`Delete ${confirmationTitle}? This action cannot be undone.`);
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingId(report.id);
+    try {
+      const shouldStepBack = reports.length === 1 && pagination.offset >= pagination.limit;
+      await deleteReport(report.id);
+      toast.success('Report deleted');
+      if (shouldStepBack) {
+        setPagination((prev) => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }));
+      } else {
+        fetchReports();
+      }
+    } catch (error) {
+      const message = error.response?.data?.error || 'Failed to delete report';
+      toast.error(message);
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -459,6 +488,24 @@ const ReportsPage = () => {
                             <Eye className="h-4 w-4" />
                             <span className="sr-only">View</span>
                           </Link>
+
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteReport(report)}
+                              disabled={deletingId === report.id}
+                              className="flex h-9 w-9 items-center justify-center rounded-md border border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                              aria-label="Delete report"
+                              title="Delete report"
+                            >
+                              {deletingId === report.id ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                              ) : (
+                                <Trash2 className="h-4 w-4" />
+                              )}
+                              <span className="sr-only">Delete</span>
+                            </button>
+                          )}
 
                           {canExport && isFinalized && (
                             <button
