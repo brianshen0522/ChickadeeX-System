@@ -94,6 +94,10 @@ const UploadViewerPage = () => {
     const baseUrl = `${protocol}//${hostname}/bluelight/html/start.html`;
     const params = new URLSearchParams();
 
+    if (selectedUpload?.id) {
+      params.set('uploadId', selectedUpload.id);
+    }
+
     if (selectedUpload.isDicom) {
       if (selectedUpload.absoluteDownloadUrl) {
         params.set('dicomurl', selectedUpload.absoluteDownloadUrl);

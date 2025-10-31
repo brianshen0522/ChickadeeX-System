@@ -199,30 +199,340 @@ function load_WebImg() {
   }
 }
 
-function load_CustomUpload() {
-  var params = new URLSearchParams(window.location.search);
-  var dicomUrl = params.get('dicomurl');
-  var imageUrl = params.get('imageurl');
+function createSeenTracker() {
+  return Object.create(null);
+}
 
-  if (imageUrl && !params.get('webimgurl')) {
-    try {
-      loadPicture(decodeURIComponent(imageUrl));
-    } catch (e) {
-      console.error('Failed to decode imageurl parameter:', e);
-      loadPicture(imageUrl);
-    }
+function normalizeSourceUrl(value) {
+  if (value == null) return null;
+  let candidate = String(value).trim();
+  if (!candidate) return null;
+  if (/^(data:|blob:)/i.test(candidate)) {
+    return candidate;
   }
-
-  if (dicomUrl) {
-    try {
-      const decoded = decodeURIComponent(dicomUrl);
-      loadDICOMFromUrl(decoded);
-    } catch (e) {
-      console.error('Failed to decode dicomurl parameter:', e);
-      loadDICOMFromUrl(dicomUrl);
-    }
+  try {
+    candidate = decodeURIComponent(candidate);
+  } catch (_err) {
+    // Ignore decode errors and use the original value
+  }
+  try {
+    return new URL(candidate, window.location.origin).href;
+  } catch (_err) {
+    return candidate;
   }
 }
+
+function hasSeen(seen, key) {
+  return !!(seen && key && seen[key]);
+}
+
+function registerSeen(seen, key) {
+  if (seen && key) {
+    seen[key] = true;
+  }
+}
+
+function loadDicomSource(url, seen) {
+  const resolved = normalizeSourceUrl(url);
+  if (!resolved || hasSeen(seen, resolved)) {
+    return false;
+  }
+  registerSeen(seen, resolved);
+  loadDICOMFromUrl(resolved);
+  return true;
+}
+
+function loadImageSource(url, seen) {
+  const resolved = normalizeSourceUrl(url);
+  if (!resolved || hasSeen(seen, resolved)) {
+    return false;
+  }
+  registerSeen(seen, resolved);
+  loadPicture(resolved);
+  return true;
+}
+
+async function fetchAndLoadUpload(uploadId, seen) {
+  const value = (uploadId || '').toString().trim();
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(`/api/uploads/${encodeURIComponent(value)}`, {
+      credentials: 'include'
+    });
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const meta = await response.json();
+    let loaded = false;
+
+    if (meta) {
+      if (meta.isDicom) {
+        const dicomSource =
+          (meta.viewerParams && meta.viewerParams.dicomUrl) ||
+          meta.absoluteDownloadUrl ||
+          meta.downloadPath;
+        if (dicomSource) {
+          loaded = loadDicomSource(dicomSource, seen) || loaded;
+        }
+
+        const imageSource =
+          (meta.viewerParams && meta.viewerParams.imageUrl) ||
+          meta.absoluteDisplayUrl;
+        if (imageSource) {
+          loadImageSource(imageSource, seen);
+        }
+      } else {
+        const imageSource =
+          (meta.viewerParams && meta.viewerParams.imageUrl) ||
+          meta.absoluteDisplayUrl ||
+          meta.absoluteDownloadUrl;
+        if (imageSource) {
+          loaded = loadImageSource(imageSource, seen) || loaded;
+        }
+      }
+    }
+
+    if (!meta || !meta.isDicom) {
+      hideDicomStatus();
+    }
+
+    return loaded;
+  } catch (error) {
+    console.error('Failed to load upload metadata:', error);
+    showDicomStatus('Upload load error: ' + error.message, true);
+    return false;
+  }
+}
+
+async function processUploadIds(uploadIds, seen) {
+  let loaded = false;
+  for (let i = 0; i < uploadIds.length; i++) {
+    const success = await fetchAndLoadUpload(uploadIds[i], seen);
+    if (success) {
+      loaded = true;
+    }
+  }
+  return loaded;
+}
+
+async function loadManifest(manifestParam, seen) {
+  const manifestUrl = normalizeSourceUrl(manifestParam);
+  if (!manifestUrl) {
+    return false;
+  }
+
+  try {
+    const response = await fetch(manifestUrl, { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
+    }
+
+    const payload = await response.json();
+    let entries;
+    if (Array.isArray(payload)) {
+      entries = payload;
+    } else if (payload && Array.isArray(payload.items)) {
+      entries = payload.items;
+    } else if (payload && Array.isArray(payload.uploads)) {
+      entries = payload.uploads;
+    } else if (payload) {
+      entries = [payload];
+    } else {
+      entries = [];
+    }
+
+    let loaded = false;
+    const uploadIds = [];
+
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (!entry) continue;
+
+      if (typeof entry === 'string') {
+        uploadIds.push(entry);
+        continue;
+      }
+
+      if (entry.uploadId) {
+        uploadIds.push(entry.uploadId);
+      }
+
+      if (entry.dicomUrl && loadDicomSource(entry.dicomUrl, seen)) {
+        loaded = true;
+      }
+
+      if (entry.imageUrl && loadImageSource(entry.imageUrl, seen)) {
+        loaded = true;
+      }
+    }
+
+    if (uploadIds.length) {
+      const idsLoaded = await processUploadIds(uploadIds, seen);
+      loaded = idsLoaded || loaded;
+    }
+
+    return loaded;
+  } catch (error) {
+    console.error('Failed to load upload manifest:', error);
+    showDicomStatus('Manifest load error: ' + error.message, true);
+    return false;
+  }
+}
+
+async function loadUploadsFromSystem(params, seen) {
+  let loaded = false;
+  if (!params) {
+    return loaded;
+  }
+
+  const manifestParam = params.get('uploadManifest');
+  if (manifestParam) {
+    const manifestLoaded = await loadManifest(manifestParam, seen);
+    loaded = manifestLoaded || loaded;
+  }
+
+  const uploadIdsParam = params.get('uploadId') || params.get('uploadIds');
+  if (uploadIdsParam) {
+    const parts = uploadIdsParam.split(',');
+    const ids = [];
+    for (let i = 0; i < parts.length; i++) {
+      const raw = parts[i];
+      if (!raw && raw !== 0) continue;
+      const trimmed = String(raw).trim();
+      if (trimmed) ids.push(trimmed);
+    }
+    if (ids.length) {
+      const idsLoaded = await processUploadIds(ids, seen);
+      loaded = idsLoaded || loaded;
+    }
+  }
+
+  return loaded;
+}
+
+async function load_CustomUpload() {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const seen = createSeenTracker();
+
+    await loadUploadsFromSystem(params, seen);
+
+    const imageUrl = params.get('imageurl');
+    if (imageUrl && !params.get('webimgurl')) {
+      if (!loadImageSource(imageUrl, seen)) {
+        try {
+          loadImageSource(decodeURIComponent(imageUrl), seen);
+        } catch (error) {
+          console.error('Failed to decode imageurl parameter:', error);
+          loadPicture(imageUrl);
+        }
+      }
+    }
+
+    const dicomUrl = params.get('dicomurl');
+    if (dicomUrl) {
+      if (!loadDicomSource(dicomUrl, seen)) {
+        try {
+          const decoded = decodeURIComponent(dicomUrl);
+          loadDicomSource(decoded, seen);
+        } catch (error) {
+          console.error('Failed to decode dicomurl parameter:', error);
+          loadDICOMFromUrl(dicomUrl);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('load_CustomUpload error:', error);
+  }
+}
+
+async function handleChickadeeIntegrationMessage(event) {
+  try {
+    if (!event || typeof event.data === 'undefined') {
+      return;
+    }
+    if (event.origin && event.origin !== window.location.origin) {
+      return;
+    }
+
+    const data = event.data || {};
+    const messageType = (typeof data.type !== 'undefined' ? data.type : null) ||
+      (typeof data.action !== 'undefined' ? data.action : null);
+
+    if (messageType === 'chickadee:resetViewer') {
+      resetViewport();
+      return;
+    }
+
+    if (messageType === 'chickadee:loadUpload' || messageType === 'chickadee:loadUploads') {
+      const payload = typeof data.payload !== 'undefined'
+        ? data.payload
+        : typeof data.uploads !== 'undefined'
+          ? data.uploads
+          : data.uploadId || data.upload;
+
+      if (!payload) {
+        return;
+      }
+
+      const entries = Array.isArray(payload) ? payload : [payload];
+      const seen = createSeenTracker();
+      const uploadIds = [];
+      let loaded = false;
+
+      for (let i = 0; i < entries.length; i++) {
+        const entry = entries[i];
+        if (!entry) {
+          continue;
+        }
+
+        if (typeof entry === 'string') {
+          uploadIds.push(entry);
+          continue;
+        }
+
+        if (entry.uploadId) {
+          uploadIds.push(entry.uploadId);
+        }
+
+        if (entry.dicomUrl && loadDicomSource(entry.dicomUrl, seen)) {
+          loaded = true;
+        }
+
+        if (entry.imageUrl && loadImageSource(entry.imageUrl, seen)) {
+          loaded = true;
+        }
+      }
+
+      if (uploadIds.length) {
+        const uniqueIds = [];
+        const seenIds = Object.create(null);
+        for (let i = 0; i < uploadIds.length; i++) {
+          const id = (uploadIds[i] || '').toString().trim();
+          if (id && !seenIds[id]) {
+            seenIds[id] = true;
+            uniqueIds.push(id);
+          }
+        }
+        const idsLoaded = await processUploadIds(uniqueIds, seen);
+        loaded = idsLoaded || loaded;
+      }
+
+      if (!loaded) {
+        console.warn('No uploads were loaded from the provided payload.');
+      }
+    }
+  } catch (error) {
+    console.error('Failed to process integration message:', error);
+  }
+}
+
+window.addEventListener('message', handleChickadeeIntegrationMessage);
 
 function readAllJson(readJson) {
   //整合QIDO-RS的URL並發送至伺服器
