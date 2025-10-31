@@ -37,9 +37,11 @@ const ReportDetailPage = () => {
     impression: '',
     clinical_context: ''
   });
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [finalizing, setFinalizing] = useState(false);
 
   const canEdit = ['doctor', 'observer'].includes(user?.role);
-  const canFinalize = user?.role === 'doctor';
+  const canFinalize = ['doctor', 'observer'].includes(user?.role);
   const canExport = ['doctor', 'researcher'].includes(user?.role);
 
   useEffect(() => {
@@ -102,12 +104,16 @@ const ReportDetailPage = () => {
   };
 
   const handleFinalize = async () => {
+    setFinalizing(true);
     try {
       await finalizeReport(reportId);
       toast.success('Report finalized successfully!');
+      setShowConfirmDialog(false);
       fetchReport();
     } catch (error) {
       toast.error('Failed to finalize report');
+    } finally {
+      setFinalizing(false);
     }
   };
 
@@ -196,7 +202,7 @@ const ReportDetailPage = () => {
                 
                 {canFinalize && !editing && !report.finalized_at && latestVersion && (
                   <button
-                    onClick={handleFinalize}
+                    onClick={() => setShowConfirmDialog(true)}
                     className="inline-flex items-center px-3 py-1.5 border border-green-200 text-sm font-medium rounded-lg text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
                   >
                     <CheckCircle className="h-4 w-4 mr-1.5" />
@@ -410,6 +416,60 @@ const ReportDetailPage = () => {
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog */}
+      {showConfirmDialog && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
+            <div className="flex items-center mb-4">
+              <div className="h-10 w-10 bg-yellow-100 rounded-lg flex items-center justify-center mr-3">
+                <Shield className="h-5 w-5 text-yellow-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-gray-900">
+                Finalize Report
+              </h3>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-sm text-gray-600 mb-3">
+                Are you sure you want to finalize this report? This action cannot be undone.
+              </p>
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                <p className="text-sm text-yellow-800">
+                  <strong>Warning:</strong> Once finalized, this report will become unchangeable and cannot be edited in the demo viewer.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-3">
+              <button
+                onClick={() => setShowConfirmDialog(false)}
+                disabled={finalizing}
+                className="px-4 py-2 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleFinalize}
+                disabled={finalizing}
+                className="inline-flex items-center px-4 py-2 border border-green-200 text-sm font-medium rounded-lg text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors disabled:opacity-50"
+              >
+                {finalizing ? (
+                  <>
+                    <LoadingSpinner size="small" />
+                    <span className="ml-2">Finalizing...</span>
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="h-4 w-4 mr-1.5" />
+                    Finalize Report
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

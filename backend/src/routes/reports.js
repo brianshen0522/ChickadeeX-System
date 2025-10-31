@@ -793,9 +793,9 @@ router.put('/:reportId/description',
     }
 );
 
-// Finalize report (Doctor only)
+// Finalize report (Doctor and Observer)
 router.post('/:reportId/finalize',
-    requireAnyRole(['doctor']),
+    requireAnyRole(['doctor', 'observer']),
     validateParams({ reportId: schemas.uuid }),
     async (req, res) => {
         try {

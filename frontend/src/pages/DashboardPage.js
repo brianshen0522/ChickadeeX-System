@@ -23,7 +23,7 @@ import { getStudiesStats } from '../services/dicomService';
 
 const DashboardPage = () => {
   const { user } = useAuth();
-  const { setPageTitle, setPageDescription } = usePageContext();
+  const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [adminMetrics, setAdminMetrics] = useState(null);
   const [doctorMetrics, setDoctorMetrics] = useState(null);
@@ -31,7 +31,10 @@ const DashboardPage = () => {
   useEffect(() => {
     setPageTitle('Home');
     setPageDescription('');
-  }, [setPageDescription, setPageTitle]);
+    setBreadcrumbs([
+      { label: 'Home', href: '/', isCurrent: true }
+    ]);
+  }, [setPageDescription, setPageTitle, setBreadcrumbs]);
 
   const role = user?.role;
   const shouldShowMetrics = role === 'admin' || role === 'doctor';
