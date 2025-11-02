@@ -81,6 +81,8 @@ const UploadViewerPage = () => {
   });
   const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
   const uploadDropdownRef = useRef(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState({ id: null, expiresAt: 0 });
+  const deleteConfirmationTimer = useRef(null);
 
   const selectedUpload = useMemo(() => {
     return uploads.find((upload) => upload.id === selectedUploadId) || null;
@@ -101,10 +103,6 @@ const UploadViewerPage = () => {
     if (selectedUpload.isDicom) {
       if (selectedUpload.absoluteDownloadUrl) {
         params.set('dicomurl', selectedUpload.absoluteDownloadUrl);
-      }
-      const previewUrl = selectedUpload.absoluteDisplayUrl;
-      if (previewUrl) {
-        params.set('imageurl', previewUrl);
       }
     } else {
       const imageSource = selectedUpload.absoluteDisplayUrl || selectedUpload.absoluteDownloadUrl;
@@ -127,6 +125,15 @@ const UploadViewerPage = () => {
     if (!viewerSrc) return;
     setViewerFrameKey((prev) => prev + 1);
   }, [viewerSrc]);
+
+  useEffect(() => {
+    return () => {
+      if (deleteConfirmationTimer.current) {
+        clearTimeout(deleteConfirmationTimer.current);
+        deleteConfirmationTimer.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!isUploadMenuOpen) return;
@@ -345,6 +352,46 @@ const UploadViewerPage = () => {
       event.stopPropagation();
       event.preventDefault();
     }
+
+    const now = Date.now();
+    const isSameTarget = deleteConfirmation.id === uploadId;
+    const isConfirmationActive = isSameTarget && deleteConfirmation.expiresAt > now;
+
+    if (!isConfirmationActive) {
+      if (deleteConfirmationTimer.current) {
+        clearTimeout(deleteConfirmationTimer.current);
+      }
+      const expiresAt = now + 8000;
+      setDeleteConfirmation({ id: uploadId, expiresAt });
+      deleteConfirmationTimer.current = setTimeout(() => {
+        setDeleteConfirmation({ id: null, expiresAt: 0 });
+        deleteConfirmationTimer.current = null;
+      }, 8000);
+
+      toast.custom((t) => (
+        <div className="max-w-sm rounded-md border border-amber-200 bg-white px-3 py-2 shadow-lg">
+          <p className="text-sm font-semibold text-slate-900">Confirm deletion</p>
+          <p className="mt-1 text-xs text-slate-600">
+            Click delete again within 8 seconds to permanently remove this upload.
+          </p>
+          <button
+            type="button"
+            onClick={() => toast.dismiss(t.id)}
+            className="mt-2 inline-flex items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-[0.7rem] font-medium text-slate-600 transition hover:bg-slate-50"
+          >
+            Got it
+          </button>
+        </div>
+      ), { duration: 5000 });
+      return;
+    }
+
+    if (deleteConfirmationTimer.current) {
+      clearTimeout(deleteConfirmationTimer.current);
+      deleteConfirmationTimer.current = null;
+    }
+    setDeleteConfirmation({ id: null, expiresAt: 0 });
+
     try {
       await deleteUpload(uploadId);
       const updated = uploads.filter((upload) => upload.id !== uploadId);
@@ -369,7 +416,7 @@ const UploadViewerPage = () => {
                   toast.dismiss(t.id);
                   navigate(`/reports/${linkedReportId}`);
                 }}
-                className="mt-2 inline-flex items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 hover:bg-blue-100 transition"
+                className="mt-2 inline-flex items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
               >
                 View linked report
               </button>
@@ -380,6 +427,12 @@ const UploadViewerPage = () => {
       }
       toast.error('Failed to delete upload');
       console.error('Delete failed:', error);
+    } finally {
+      if (deleteConfirmationTimer.current) {
+        clearTimeout(deleteConfirmationTimer.current);
+        deleteConfirmationTimer.current = null;
+      }
+      setDeleteConfirmation({ id: null, expiresAt: 0 });
     }
   };
 
@@ -561,6 +614,8 @@ const UploadViewerPage = () => {
               uploads.map((upload) => {
                 const isActive = upload.id === selectedUploadId;
                 const Icon = upload.type === 'dicom' ? Film : FileImage;
+                const isDeleteConfirming =
+                  deleteConfirmation.id === upload.id && deleteConfirmation.expiresAt > Date.now();
                 return (
                   <button
                     key={upload.id}
@@ -586,9 +641,14 @@ const UploadViewerPage = () => {
                     <button
                       type="button"
                       onClick={(event) => handleDelete(upload.id, event)}
-                      className="rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-red-500"
+                      className={`rounded-full border p-1 transition ${
+                        isDeleteConfirming
+                          ? 'border-red-400 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700'
+                          : 'border-transparent text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-600'
+                      }`}
+                      title={isDeleteConfirming ? 'Click again to permanently delete' : 'Delete upload'}
                     >
-                      <Trash2 className="h-3 w-3" />
+                      <Trash2 className={`h-3 w-3 ${isDeleteConfirming ? 'animate-pulse' : ''}`} />
                     </button>
                   </button>
                 );

@@ -2,6 +2,7 @@ const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const fsp = fs.promises;
 const { v4: uuidv4 } = require('uuid');
 
 const { authenticateToken, requireAnyRole } = require('../middleware/auth');
@@ -175,8 +176,8 @@ const mapUploadRow = (row, req) => {
         storedValue: row.study_instance_uid
     });
 
-    // For DICOM files with converted images, use the converted image for display
-    // For regular images, use the original file
+    // For DICOM files we keep the original for viewer access and expose the converted JPEG separately.
+    // For regular images, use the original file for both download and display.
     const type = isDicom ? 'dicom' : 'image';
     const downloadPath = `/api/uploads/${row.id}/file`;
     const displayPath = isDicom && hasConvertedImage
@@ -197,10 +198,13 @@ const mapUploadRow = (row, req) => {
         downloadPath,
         displayPath,
         viewerParams: isDicom
-            ? { dicomUrl: downloadPath, imageUrl: displayPath }
+            ? { dicomUrl: downloadPath }
             : { imageUrl: downloadPath },
         absoluteDownloadUrl: `${req.protocol}://${req.get('host')}${downloadPath}`,
         absoluteDisplayUrl: `${req.protocol}://${req.get('host')}${displayPath}`,
+        convertedImageUrl: hasConvertedImage
+            ? `${req.protocol}://${req.get('host')}${displayPath}`
+            : null,
         thumbnailPath: row.thumbnail_key
             ? `${req.protocol}://${req.get('host')}/api/uploads/${row.id}/thumbnail`
             : null,
@@ -554,8 +558,12 @@ router.get('/:uploadId/converted', async (req, res) => {
             return res.status(410).json({ error: 'Converted image is no longer available' });
         }
 
-        res.setHeader('Content-Type', 'image/png');
-        res.setHeader('Content-Disposition', `inline; filename="converted_${encodeURIComponent(uploadRow.original_filename)}.png"`);
+        const convertedExt = path.extname(uploadRow.converted_image_path || '').toLowerCase();
+        const mimeType = convertedExt === '.jpg' || convertedExt === '.jpeg' ? 'image/jpeg' : 'image/png';
+        res.setHeader('Content-Type', mimeType);
+        const sanitizedName = path.parse(uploadRow.original_filename || 'study').name || 'study';
+        const downloadExt = convertedExt || '.jpg';
+        res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(`converted_${sanitizedName}${downloadExt}`)}"`);
 
         const stream = fs.createReadStream(filePath);
         stream.on('error', (err) => {
@@ -657,29 +665,44 @@ router.delete('/:uploadId', async (req, res) => {
                 return res.status(404).json({ error: 'Upload not found or already deleted' });
             }
 
-            // Delete physical files
-            const filesToDelete = [path.join(UPLOAD_ROOT, stored_filename)];
+            // Delete physical files (failures will roll back DB changes)
+            const fileDescriptors = [
+                { path: path.join(UPLOAD_ROOT, stored_filename), type: 'original' }
+            ];
 
-            // If it's a DICOM file with converted image, delete both files
             if (is_dicom && converted_image_path) {
-                filesToDelete.push(path.join(UPLOAD_ROOT, converted_image_path));
+                fileDescriptors.push({
+                    path: path.join(UPLOAD_ROOT, converted_image_path),
+                    type: 'converted'
+                });
             }
 
-            filesToDelete.forEach((filePath) => {
-                fs.unlink(filePath, (err) => {
-                    if (err) {
-                        logger.warn(`Failed to delete file: ${filePath}`, err);
+            const deletionSummary = [];
+            for (const fileDescriptor of fileDescriptors) {
+                try {
+                    await fsp.unlink(fileDescriptor.path);
+                    logger.info(`Deleted file: ${fileDescriptor.path}`);
+                    deletionSummary.push({ ...fileDescriptor, status: 'deleted' });
+                } catch (err) {
+                    if (err && err.code === 'ENOENT') {
+                        // File already missing – treat as non-fatal but record the event
+                        logger.warn(`File already missing during delete: ${fileDescriptor.path}`);
+                        deletionSummary.push({ ...fileDescriptor, status: 'missing' });
                     } else {
-                        logger.info(`Deleted file: ${filePath}`);
+                        throw new Error(`Failed to delete file ${fileDescriptor.path}: ${err?.message || err}`);
                     }
-                });
-            });
+                }
+            }
 
             // Create audit log
+            const deletedCount = deletionSummary.filter((item) => item.status === 'deleted').length;
+            const missingCount = deletionSummary.filter((item) => item.status === 'missing').length;
+
             await createAuditLog(req.user.id, 'upload_deleted', 'upload', req.params.uploadId, {
                 original_filename,
                 is_dicom,
-                files_deleted: filesToDelete.length,
+                files_deleted: deletedCount,
+                files_missing: missingCount,
                 ip: req.ip,
                 user_agent: req.get('User-Agent')
             });
@@ -689,7 +712,8 @@ router.delete('/:uploadId', async (req, res) => {
 
             res.json({
                 message: 'Upload removed successfully',
-                filesDeleted: filesToDelete.length,
+                filesDeleted: deletedCount,
+                filesMissing: missingCount,
                 isDicom: is_dicom
             });
 

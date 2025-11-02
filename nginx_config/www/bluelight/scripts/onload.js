@@ -279,13 +279,6 @@ async function fetchAndLoadUpload(uploadId, seen) {
         if (dicomSource) {
           loaded = loadDicomSource(dicomSource, seen) || loaded;
         }
-
-        const imageSource =
-          (meta.viewerParams && meta.viewerParams.imageUrl) ||
-          meta.absoluteDisplayUrl;
-        if (imageSource) {
-          loadImageSource(imageSource, seen);
-        }
       } else {
         const imageSource =
           (meta.viewerParams && meta.viewerParams.imageUrl) ||
@@ -362,12 +355,14 @@ async function loadManifest(manifestParam, seen) {
         uploadIds.push(entry.uploadId);
       }
 
-      if (entry.dicomUrl && loadDicomSource(entry.dicomUrl, seen)) {
-        loaded = true;
-      }
-
-      if (entry.imageUrl && loadImageSource(entry.imageUrl, seen)) {
-        loaded = true;
+      if (entry.dicomUrl) {
+        if (loadDicomSource(entry.dicomUrl, seen)) {
+          loaded = true;
+        }
+      } else if (entry.imageUrl) {
+        if (loadImageSource(entry.imageUrl, seen)) {
+          loaded = true;
+        }
       }
     }
 
@@ -422,18 +417,6 @@ async function load_CustomUpload() {
 
     await loadUploadsFromSystem(params, seen);
 
-    const imageUrl = params.get('imageurl');
-    if (imageUrl && !params.get('webimgurl')) {
-      if (!loadImageSource(imageUrl, seen)) {
-        try {
-          loadImageSource(decodeURIComponent(imageUrl), seen);
-        } catch (error) {
-          console.error('Failed to decode imageurl parameter:', error);
-          loadPicture(imageUrl);
-        }
-      }
-    }
-
     const dicomUrl = params.get('dicomurl');
     if (dicomUrl) {
       if (!loadDicomSource(dicomUrl, seen)) {
@@ -443,6 +426,18 @@ async function load_CustomUpload() {
         } catch (error) {
           console.error('Failed to decode dicomurl parameter:', error);
           loadDICOMFromUrl(dicomUrl);
+        }
+      }
+    } else {
+      const imageUrl = params.get('imageurl');
+      if (imageUrl && !params.get('webimgurl')) {
+        if (!loadImageSource(imageUrl, seen)) {
+          try {
+            loadImageSource(decodeURIComponent(imageUrl), seen);
+          } catch (error) {
+            console.error('Failed to decode imageurl parameter:', error);
+            loadPicture(imageUrl);
+          }
         }
       }
     }
@@ -500,12 +495,14 @@ async function handleChickadeeIntegrationMessage(event) {
           uploadIds.push(entry.uploadId);
         }
 
-        if (entry.dicomUrl && loadDicomSource(entry.dicomUrl, seen)) {
-          loaded = true;
-        }
-
-        if (entry.imageUrl && loadImageSource(entry.imageUrl, seen)) {
-          loaded = true;
+        if (entry.dicomUrl) {
+          if (loadDicomSource(entry.dicomUrl, seen)) {
+            loaded = true;
+          }
+        } else if (entry.imageUrl) {
+          if (loadImageSource(entry.imageUrl, seen)) {
+            loaded = true;
+          }
         }
       }
 
