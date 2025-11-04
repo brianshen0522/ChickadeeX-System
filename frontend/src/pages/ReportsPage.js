@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { getReports, deleteReport } from '../services/reportService';
+import { getReports, deleteReport, getReportsSummary } from '../services/reportService';
 import { Search, Filter, Eye, Download, CheckCircle, Clock, User, FileText, X, BarChart3, Activity, Trash2, Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 import LoadingSpinner from '../components/UI/LoadingSpinner';

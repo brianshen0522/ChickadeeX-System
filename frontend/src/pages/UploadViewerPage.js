@@ -116,10 +116,14 @@ const UploadViewerPage = () => {
     }
     const match = resolvedFilename.match(/(\.[^./\\]+)$/);
     if (match) {
-      return {
-        base: resolvedFilename.slice(0, -match[1].length) || match[1],
-        ext: match[1]
-      };
+      const basePart = resolvedFilename.slice(0, -match[1].length);
+      if (basePart) {
+        return {
+          base: basePart,
+          ext: match[1]
+        };
+      }
+      return { base: resolvedFilename, ext: '' };
     }
     return { base: resolvedFilename, ext: '' };
   }, [resolvedFilename]);
@@ -961,7 +965,7 @@ const UploadViewerPage = () => {
 
   const renderReportPanel = () => {
     return (
-      <aside className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
+      <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
         <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-2 md:flex-nowrap">
           <div className="flex items-center gap-3 flex-shrink-0">
             <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Version</span>
@@ -1114,13 +1118,13 @@ const UploadViewerPage = () => {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden px-6 py-4">
-      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-medical">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex-1 min-w-0">
+    <div className="flex h-full flex-col overflow-hidden px-5 py-3">
+      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-medical">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="flex-1 min-w-[260px]">
             {hasSavedDraft && selectedUpload ? (
-              <div className="space-y-3">
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="space-y-2">
+                <div className="flex flex-wrap items-center gap-2 text-xs">
                   {metadataDirty && (
                     <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -1128,43 +1132,43 @@ const UploadViewerPage = () => {
                     </span>
                   )}
                 </div>
-                <input
-                  value={studyTitle}
-                  onChange={(event) => handleStudyTitleChange(event.target.value)}
-                  placeholder="Study name"
-                  maxLength={80}
-                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                />
-                <textarea
-                  value={studySummary}
-                  onChange={(event) => handleStudySummaryChange(event.target.value)}
-                  placeholder="Add a short description for this study"
-                  rows={2}
-                  className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                  maxLength={220}
-                />
+                <div className="grid gap-2 md:grid-cols-2 md:gap-3">
+                  <input
+                    value={studyTitle}
+                    onChange={(event) => handleStudyTitleChange(event.target.value)}
+                    placeholder="Study name"
+                    maxLength={80}
+                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  />
+                  <textarea
+                    value={studySummary}
+                    onChange={(event) => handleStudySummaryChange(event.target.value)}
+                    placeholder="Add a short description for this study"
+                    rows={2}
+                    className="w-full min-h-[42px] resize-none rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 md:col-span-2"
+                    maxLength={220}
+                  />
+                </div>
               </div>
             ) : (
-              <div className="space-y-2">
-                <h1 className="text-lg font-semibold text-slate-800">
+              <div className="max-w-2xl space-y-2 text-slate-700">
+                <h1 className="text-lg font-semibold text-slate-900">
                   Preview a study with BlueLight and draft a clinical report.
                 </h1>
-                <p className="max-w-xl text-sm text-slate-600">
-                  Upload a DICOM or medical image to open it in the viewer, then capture findings and impressions side by side.
+                <p className="text-sm leading-relaxed">
+                  Upload a DICOM or medical image to open it in the viewer, then capture findings and impressions side by side. AI assistance helps you iterate quickly while keeping patient context in view.
                 </p>
               </div>
             )}
           </div>
-          <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:items-end">
-            <div className="flex justify-end">
-              {renderUploadsDropdown()}
-            </div>
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            <div className="sm:flex-shrink-0">{renderUploadsDropdown()}</div>
             <button
               type="button"
               onClick={handleSaveMetadata}
               disabled={!metadataSaveEnabled || isMetadataSaving}
               aria-label="Save report metadata"
-              className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {isMetadataSaving ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -1177,11 +1181,11 @@ const UploadViewerPage = () => {
         </div>
       </div>
 
-      <div className="mt-4 grid h-full gap-5 lg:grid-cols-[minmax(0,1fr),420px]">
-        <div className="h-full">
+      <div className="mt-2 grid flex-1 min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr),420px]">
+        <div className="h-full min-h-0">
           {renderViewer()}
         </div>
-        <div className="h-full">
+        <div className="h-full min-h-0">
           {renderReportPanel()}
         </div>
       </div>
