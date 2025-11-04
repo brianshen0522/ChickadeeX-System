@@ -215,7 +215,7 @@ const UploadViewerPage = () => {
 
   const latestVersionNo = versionsSorted.length ? versionsSorted[0].version_no : null;
   const hasSavedDraft = Boolean(reportState.reportId) || versionsSorted.length > 0;
-  const metadataSaveEnabled = Boolean(selectedUpload) && (metadataDirty || !hasSavedDraft) && Boolean(studyTitle.trim());
+  const metadataSaveEnabled = Boolean(selectedUpload) && Boolean(studyTitle.trim());
 
   useEffect(() => {
     if (!viewerSrc) return;
@@ -1134,14 +1134,14 @@ const UploadViewerPage = () => {
                     className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                   />
                 </div>
-                {metadataDirty && (
-                  <div className="flex-shrink-0">
+                <div className="flex-shrink-0 w-24 flex justify-end">
+                  {metadataDirty && (
                     <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
                       <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
                       Unsaved changes
                     </span>
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
@@ -1175,7 +1175,7 @@ const UploadViewerPage = () => {
                   maxLength={220}
                   className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
-                <div className="mt-1 h-4 flex justify-end">
+                <div className="mt-1 h-4 flex justify-between">
                   {studySummary && (
                     <p className="text-xs text-slate-500">
                       {studySummary.length}/220 characters
@@ -1186,15 +1186,70 @@ const UploadViewerPage = () => {
             </div>
           </div>
         ) : (
-          <div className="text-center space-y-3">
-            <h1 className="text-xl font-semibold text-slate-900">
-              Preview studies with BlueLight and draft clinical reports
-            </h1>
-            <p className="text-sm leading-relaxed text-slate-600 max-w-2xl mx-auto">
-              Upload a DICOM or medical image to open it in the viewer, then capture findings and impressions side by side. AI assistance helps you iterate quickly while keeping patient context in view.
-            </p>
-            <div className="pt-2">
-              {renderUploadsDropdown()}
+          <div className="space-y-3">
+            {/* Row 1: Study Title + Unsaved Indicator + Primary Actions */}
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex-1 min-w-0 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="study-title-new" className="sr-only">Study Title</label>
+                  <input
+                    id="study-title-new"
+                    value={studyTitle}
+                    onChange={(event) => handleStudyTitleChange(event.target.value)}
+                    placeholder="Study name"
+                    maxLength={80}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+                <div className="flex-shrink-0 w-24 flex justify-end">
+                  {metadataDirty && (
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Unsaved changes
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
+                <button
+                  type="button"
+                  onClick={handleSaveMetadata}
+                  disabled={!metadataSaveEnabled || isMetadataSaving}
+                  aria-label="Save report metadata"
+                  className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isMetadataSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
+                  )}
+                  <span>Save Report</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Row 2: Description Only */}
+            <div className="flex flex-col">
+              <div className="flex-1 min-w-0">
+                <label htmlFor="study-description-new" className="sr-only">Study Description</label>
+                <textarea
+                  id="study-description-new"
+                  value={studySummary}
+                  onChange={(event) => handleStudySummaryChange(event.target.value)}
+                  placeholder="Add a short description for this study (optional)"
+                  rows={2}
+                  maxLength={220}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                <div className="mt-1 h-4 flex justify-between">
+                  {studySummary && (
+                    <p className="text-xs text-slate-500">
+                      {studySummary.length}/220 characters
+                    </p>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
