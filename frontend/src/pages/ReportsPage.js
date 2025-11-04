@@ -33,6 +33,8 @@ const ReportsPage = () => {
     total: 0
   });
   const [deletingId, setDeletingId] = useState(null);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteModalTarget, setDeleteModalTarget] = useState(null);
 
   useEffect(() => {
     if (!user) return;
@@ -169,14 +171,21 @@ const ReportsPage = () => {
 
   const canDelete = ['doctor', 'observer', 'admin'].includes(user?.role);
 
-  const handleDeleteReport = async (report) => {
+  const openDeleteModal = (report) => {
     if (!canDelete) return;
-    const confirmationTitle = report.title || report.patient_name || report.patient_id || 'this report';
-    const confirmed = window.confirm(`Delete ${confirmationTitle}? This action cannot be undone.`);
-    if (!confirmed) {
-      return;
-    }
+    setDeleteModalTarget(report);
+    setDeleteModalOpen(true);
+  };
 
+  const closeDeleteModal = () => {
+    if (deletingId) return;
+    setDeleteModalOpen(false);
+    setDeleteModalTarget(null);
+  };
+
+  const confirmDeleteReport = async () => {
+    if (!canDelete || !deleteModalTarget) return;
+    const report = deleteModalTarget;
     setDeletingId(report.id);
     try {
       const shouldStepBack = reports.length === 1 && pagination.offset >= pagination.limit;
@@ -187,6 +196,8 @@ const ReportsPage = () => {
       } else {
         fetchReports();
       }
+      setDeleteModalOpen(false);
+      setDeleteModalTarget(null);
     } catch (error) {
       const message = error.response?.data?.error || 'Failed to delete report';
       toast.error(message);
@@ -228,7 +239,8 @@ const ReportsPage = () => {
   const activeStatusLabel = statusLabelMap[filters.status] || 'All Reports';
 
   return (
-    <div className="flex flex-col h-full space-y-4">
+    <>
+      <div className="flex flex-col h-full space-y-4">
       {/* Compact Header Summary */}
       <div className="flex flex-col gap-2 text-[0.75rem] text-slate-500 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-center gap-2">
@@ -406,7 +418,12 @@ const ReportsPage = () => {
                   const reportTitle = report.title || report.patient_name || (report.patient_id ? `Patient ${report.patient_id}` : 'Report');
                   const patientIdentifier = report.patient_id || '—';
                   const truncatedPatientId = patientIdentifier.length > 12 ? `${patientIdentifier.substring(0, 12)}...` : patientIdentifier;
-                  const reportDescription = report.description ?? report.study_description ?? '';
+                  const rawDescriptor = report.description ?? report.study_description ?? '';
+                  let normalizedDescription = rawDescriptor;
+                  if (rawDescriptor && rawDescriptor.includes('\n\n')) {
+                    const [titlePart, ...rest] = rawDescriptor.split(/\n\n/);
+                    normalizedDescription = rest.join('\n\n') || titlePart;
+                  }
 
                   return (
                     <div
@@ -465,14 +482,24 @@ const ReportsPage = () => {
                               </div>
                             </div>
 
-                            {reportDescription && (
-                              <div className="mt-1 text-xs text-gray-600">
-                                <p
-                                  className="line-clamp-1"
-                                  title={reportDescription}
-                                >
-                                  {reportDescription}
-                                </p>
+                            {rawDescriptor && (
+                              <div className="mt-1 text-xs text-gray-600 flex flex-wrap items-center gap-1">
+                                {reportTitle && (
+                                  <span className="font-medium text-gray-700 truncate max-w-[10rem] sm:max-w-[14rem]">
+                                    {reportTitle}
+                                  </span>
+                                )}
+                                {reportTitle && normalizedDescription && (
+                                  <span className="text-gray-300">|</span>
+                                )}
+                                {normalizedDescription && (
+                                  <span
+                                    className="truncate text-gray-500 max-w-[12rem] sm:max-w-[18rem]"
+                                    title={normalizedDescription}
+                                  >
+                                    {normalizedDescription}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -492,7 +519,7 @@ const ReportsPage = () => {
                           {canDelete && (
                             <button
                               type="button"
-                              onClick={() => handleDeleteReport(report)}
+                              onClick={() => openDeleteModal(report)}
                               disabled={deletingId === report.id}
                               className="flex h-9 w-9 items-center justify-center rounded-md border border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
                               aria-label="Delete report"
@@ -583,7 +610,64 @@ const ReportsPage = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+
+      {deleteModalOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/40 px-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={closeDeleteModal}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-5 py-4">
+              <h2 className="text-sm font-semibold text-slate-900">Delete report</h2>
+            </div>
+            <div className="px-5 py-4 text-sm text-slate-600 space-y-3">
+              <p>
+                {deleteModalTarget
+                  ? `Remove “${deleteModalTarget.patient_name || deleteModalTarget.patient_id || 'this report'}” from your workspace?`
+                  : 'Remove this report from your workspace?'}
+              </p>
+              <p className="text-xs text-slate-500">
+                This action permanently removes the report and all saved versions.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-5 py-3">
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                disabled={Boolean(deletingId)}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteReport}
+                disabled={Boolean(deletingId)}
+                className="inline-flex items-center gap-2 rounded-md border border-rose-200 bg-rose-50 px-3 py-1.5 text-sm font-semibold text-rose-600 transition hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-300 disabled:opacity-60"
+              >
+                {deletingId ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting…
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 };
 

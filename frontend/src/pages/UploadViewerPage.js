@@ -12,7 +12,9 @@ import {
   ClipboardCheck,
   FileImage,
   Film,
-  LayoutList
+  FolderOpen,
+  CheckCircle2,
+  FileText
 } from 'lucide-react';
 import { usePageContext } from '../contexts/PageContext';
 import {
@@ -24,6 +26,7 @@ import {
   saveReportVersion,
   getUploadReport
 } from '../services/uploadService';
+import api from '../services/api';
 
 const formatTimestamp = (timestamp, fallback = '--') => {
   if (!timestamp) return fallback;
@@ -81,19 +84,106 @@ const UploadViewerPage = () => {
   });
   const [isUploadMenuOpen, setIsUploadMenuOpen] = useState(false);
   const uploadDropdownRef = useRef(null);
-  const [deleteConfirmation, setDeleteConfirmation] = useState({ id: null, expiresAt: 0 });
-  const deleteConfirmationTimer = useRef(null);
+  const [studyTitle, setStudyTitle] = useState('');
+  const [studySummary, setStudySummary] = useState('');
+  const [metadataDirty, setMetadataDirty] = useState(false);
+  const [showSavedIndicator, setShowSavedIndicator] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleteModalMessage, setDeleteModalMessage] = useState('');
+  const [deleteLinkedReportId, setDeleteLinkedReportId] = useState(null);
+  const [isDeletingUpload, setIsDeletingUpload] = useState(false);
+  const savedIndicatorTimer = useRef(null);
+  const [isMetadataSaving, setIsMetadataSaving] = useState(false);
 
   const selectedUpload = useMemo(() => {
     return uploads.find((upload) => upload.id === selectedUploadId) || null;
   }, [uploads, selectedUploadId]);
 
+  const resolvedFilename = useMemo(() => {
+    if (selectedUpload?.originalFilename) {
+      return selectedUpload.originalFilename;
+    }
+    if (studyTitle) {
+      return studyTitle;
+    }
+    return 'Study';
+  }, [selectedUpload?.originalFilename, studyTitle]);
+
+  const splitFilename = useMemo(() => {
+    if (!resolvedFilename) {
+      return { base: 'Study', ext: '' };
+    }
+    const match = resolvedFilename.match(/(\.[^./\\]+)$/);
+    if (match) {
+      return {
+        base: resolvedFilename.slice(0, -match[1].length) || match[1],
+        ext: match[1]
+      };
+    }
+    return { base: resolvedFilename, ext: '' };
+  }, [resolvedFilename]);
+
+  const canGenerate = Boolean(selectedUpload);
+
+  const deriveDefaultTitle = useCallback((filename) => {
+    if (!filename) return 'Study';
+    const stripped = filename.replace(/\.[^/.]+$/, '');
+    return stripped.trim() || filename;
+  }, []);
+
+  const parseStudyDescriptor = useCallback((raw, fallbackTitle) => {
+    if (!raw || typeof raw !== 'string') {
+      return { title: fallbackTitle, summary: '' };
+    }
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        const title = typeof parsed.title === 'string' && parsed.title.trim() ? parsed.title : fallbackTitle;
+        const summary = typeof parsed.summary === 'string' ? parsed.summary : '';
+        return { title, summary };
+      }
+    } catch (_error) {
+      // Treat as plain string fallback
+    }
+    const [titlePart, ...rest] = raw.split(/\n\n/);
+    const summaryFromString = rest.join('\n\n');
+    const title = titlePart && titlePart.trim() ? titlePart.trim() : fallbackTitle;
+    const summary = summaryFromString.trim();
+    return { title, summary };
+  }, []);
+
+  useEffect(() => {
+    if (!selectedUpload) {
+      setStudyTitle('');
+      setStudySummary('');
+      setMetadataDirty(false);
+      setShowSavedIndicator(false);
+      return;
+    }
+
+    const originalName = selectedUpload.originalFilename || 'Study';
+    const baseName = deriveDefaultTitle(originalName);
+    setStudyTitle(baseName);
+    setStudySummary('');
+    setMetadataDirty(false);
+    setShowSavedIndicator(false);
+  }, [deriveDefaultTitle, selectedUpload?.id, selectedUpload?.originalFilename]);
+
   const viewerSrc = useMemo(() => {
     if (!selectedUpload) return '';
     if (typeof window === 'undefined') return '';
 
-    const { protocol, hostname } = window.location;
-    const baseUrl = `${protocol}//${hostname}/bluelight/html/start.html`;
+    const explicitBase = process.env.REACT_APP_BLUELIGHT_BASE_URL;
+    let baseUrl;
+
+    if (explicitBase) {
+      baseUrl = explicitBase.replace(/\/+$/, '') + '/html/start.html';
+    } else {
+      const { protocol, hostname } = window.location;
+      baseUrl = `${protocol}//${hostname}/bluelight/html/start.html`;
+    }
+
     const params = new URLSearchParams();
 
     if (selectedUpload?.id) {
@@ -120,6 +210,8 @@ const UploadViewerPage = () => {
   }, [reportState.versions]);
 
   const latestVersionNo = versionsSorted.length ? versionsSorted[0].version_no : null;
+  const hasSavedDraft = Boolean(reportState.reportId) || versionsSorted.length > 0;
+  const metadataSaveEnabled = Boolean(selectedUpload) && (metadataDirty || !hasSavedDraft) && Boolean(studyTitle.trim());
 
   useEffect(() => {
     if (!viewerSrc) return;
@@ -128,12 +220,23 @@ const UploadViewerPage = () => {
 
   useEffect(() => {
     return () => {
-      if (deleteConfirmationTimer.current) {
-        clearTimeout(deleteConfirmationTimer.current);
-        deleteConfirmationTimer.current = null;
+      if (savedIndicatorTimer.current) {
+        clearTimeout(savedIndicatorTimer.current);
+        savedIndicatorTimer.current = null;
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!isUploadMenuOpen) return;
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') {
+        setIsUploadMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isUploadMenuOpen]);
 
   useEffect(() => {
     if (!isUploadMenuOpen) return;
@@ -165,7 +268,12 @@ const UploadViewerPage = () => {
     try {
       const response = await listUploads({ limit: 20 });
       const items = response.items || [];
-      setUploads(items);
+      const normalizedItems = items.map((item) => ({
+        ...item,
+        displayTitle: deriveDefaultTitle(item.originalFilename),
+        displayDescription: ''
+      }));
+      setUploads(normalizedItems);
       setNextCursor(response.nextCursor || null);
 
       if (!items.length) {
@@ -203,14 +311,19 @@ const UploadViewerPage = () => {
     } finally {
       setIsLoadingUploads(false);
     }
-  }, [requestedUploadId, requestedStudyUid, selectedUploadId]);
+  }, [deriveDefaultTitle, requestedUploadId, requestedStudyUid, selectedUploadId]);
 
   const loadMoreUploads = useCallback(async () => {
     if (!nextCursor || isLoadingMore) return;
     setIsLoadingMore(true);
     try {
       const response = await listUploads({ cursor: nextCursor, limit: 20 });
-      setUploads((prev) => [...prev, ...(response.items || [])]);
+      const appended = (response.items || []).map((item) => ({
+        ...item,
+        displayTitle: deriveDefaultTitle(item.originalFilename),
+        displayDescription: ''
+      }));
+      setUploads((prev) => [...prev, ...appended]);
       setNextCursor(response.nextCursor || null);
     } catch (error) {
       toast.error('Failed to load more uploads');
@@ -218,7 +331,7 @@ const UploadViewerPage = () => {
     } finally {
       setIsLoadingMore(false);
     }
-  }, [nextCursor, isLoadingMore]);
+  }, [deriveDefaultTitle, isLoadingMore, nextCursor]);
 
   useEffect(() => {
     refreshUploads();
@@ -250,13 +363,30 @@ const UploadViewerPage = () => {
         const report = await getUploadReport(selectedUploadId);
         if (!isMounted) return;
 
+        const defaultTitle = deriveDefaultTitle(selectedUpload?.originalFilename);
+        const descriptor = report?.study_description
+          ? parseStudyDescriptor(report.study_description, defaultTitle)
+          : { title: defaultTitle, summary: '' };
+        const normalizedTitle = descriptor.title || defaultTitle;
+        const normalizedSummary = descriptor.summary || '';
+        setStudyTitle(normalizedTitle);
+        setStudySummary(normalizedSummary);
+        setMetadataDirty(!report.id);
+        setUploads((prev) =>
+          prev.map((item) =>
+            item.id === selectedUploadId
+              ? { ...item, displayTitle: normalizedTitle, displayDescription: normalizedSummary }
+              : item
+          )
+        );
+
         const versionsRaw = Array.isArray(report.versions) ? report.versions : [];
         const sortedVersions = versionsRaw.sort((a, b) => b.version_no - a.version_no);
         const latest = sortedVersions[0] || null;
 
         setReportState((prev) => ({
           ...prev,
-          reportId: report.id || null,
+          reportId: report?.id || null,
           versions: sortedVersions,
           activeVersion: latest?.version_no ?? null,
           findings: latest?.findings || '',
@@ -280,6 +410,18 @@ const UploadViewerPage = () => {
             isLoading: false,
             lastSavedAt: null
           }));
+          const fallbackTitle = deriveDefaultTitle(selectedUpload?.originalFilename);
+          setStudyTitle(fallbackTitle);
+          setStudySummary('');
+          setShowSavedIndicator(false);
+          setMetadataDirty(true);
+          setUploads((prev) =>
+            prev.map((item) =>
+              item.id === selectedUploadId
+                ? { ...item, displayTitle: fallbackTitle, displayDescription: '' }
+                : item
+            )
+          );
         } else {
           setReportState((prev) => ({
             ...prev,
@@ -287,6 +429,11 @@ const UploadViewerPage = () => {
             error: 'Failed to load existing report'
           }));
           console.error('Failed to load existing report:', error);
+          const fallbackTitle = deriveDefaultTitle(selectedUpload?.originalFilename);
+          setStudyTitle(fallbackTitle);
+          setStudySummary('');
+          setMetadataDirty(false);
+          setShowSavedIndicator(false);
         }
       }
     };
@@ -295,7 +442,7 @@ const UploadViewerPage = () => {
     return () => {
       isMounted = false;
     };
-  }, [selectedUploadId]);
+  }, [deriveDefaultTitle, parseStudyDescriptor, selectedUpload?.originalFilename, selectedUploadId]);
 
   const handleUpload = async (event) => {
     const files = Array.from(event.target.files || []);
@@ -347,92 +494,62 @@ const UploadViewerPage = () => {
     }
   };
 
-  const handleDelete = async (uploadId, event) => {
+  const openDeleteModal = (upload, event) => {
     if (event) {
       event.stopPropagation();
       event.preventDefault();
     }
+    setDeleteTarget(upload);
+    setDeleteModalMessage(`Remove "${upload.originalFilename}" from Demo? This study will disappear from the viewer.`);
+    setDeleteLinkedReportId(null);
+    setDeleteModalOpen(true);
+    setIsDeletingUpload(false);
+  };
 
-    const now = Date.now();
-    const isSameTarget = deleteConfirmation.id === uploadId;
-    const isConfirmationActive = isSameTarget && deleteConfirmation.expiresAt > now;
+  const closeDeleteModal = () => {
+    setDeleteModalOpen(false);
+    setDeleteTarget(null);
+    setDeleteModalMessage('');
+    setDeleteLinkedReportId(null);
+    setIsDeletingUpload(false);
+  };
 
-    if (!isConfirmationActive) {
-      if (deleteConfirmationTimer.current) {
-        clearTimeout(deleteConfirmationTimer.current);
-      }
-      const expiresAt = now + 8000;
-      setDeleteConfirmation({ id: uploadId, expiresAt });
-      deleteConfirmationTimer.current = setTimeout(() => {
-        setDeleteConfirmation({ id: null, expiresAt: 0 });
-        deleteConfirmationTimer.current = null;
-      }, 8000);
-
-      toast.custom((t) => (
-        <div className="max-w-sm rounded-md border border-amber-200 bg-white px-3 py-2 shadow-lg">
-          <p className="text-sm font-semibold text-slate-900">Confirm deletion</p>
-          <p className="mt-1 text-xs text-slate-600">
-            Click delete again within 8 seconds to permanently remove this upload.
-          </p>
-          <button
-            type="button"
-            onClick={() => toast.dismiss(t.id)}
-            className="mt-2 inline-flex items-center justify-center rounded-md border border-slate-200 px-2 py-1 text-[0.7rem] font-medium text-slate-600 transition hover:bg-slate-50"
-          >
-            Got it
-          </button>
-        </div>
-      ), { duration: 5000 });
+  const confirmDeleteUpload = async () => {
+    if (!deleteTarget) {
+      closeDeleteModal();
       return;
     }
 
-    if (deleteConfirmationTimer.current) {
-      clearTimeout(deleteConfirmationTimer.current);
-      deleteConfirmationTimer.current = null;
+    if (deleteLinkedReportId) {
+      closeDeleteModal();
+      navigate(`/reports/${deleteLinkedReportId}`);
+      return;
     }
-    setDeleteConfirmation({ id: null, expiresAt: 0 });
+
+    setIsDeletingUpload(true);
 
     try {
-      await deleteUpload(uploadId);
-      const updated = uploads.filter((upload) => upload.id !== uploadId);
+      await deleteUpload(deleteTarget.id);
+      const updated = uploads.filter((upload) => upload.id !== deleteTarget.id);
       setUploads(updated);
       toast.success('Upload deleted');
-      if (selectedUploadId === uploadId) {
+      if (selectedUploadId === deleteTarget.id) {
         setSelectedUploadId(updated[0]?.id || null);
       }
+      closeDeleteModal();
     } catch (error) {
       if (error.response?.status === 409) {
         const linkedReportId = error.response.data?.reportId;
-        toast.custom((t) => (
-          <div className="max-w-sm rounded-md border border-slate-200 bg-white p-3 shadow-lg">
-            <p className="text-sm font-semibold text-slate-900">Linked report detected</p>
-            <p className="mt-1 text-xs text-slate-600">
-              Delete the associated report before removing this study from Demo.
-            </p>
-            {linkedReportId && (
-              <button
-                type="button"
-                onClick={() => {
-                  toast.dismiss(t.id);
-                  navigate(`/reports/${linkedReportId}`);
-                }}
-                className="mt-2 inline-flex items-center justify-center rounded-md border border-blue-200 bg-blue-50 px-3 py-1 text-xs font-semibold text-blue-600 transition hover:bg-blue-100"
-              >
-                View linked report
-              </button>
-            )}
-          </div>
-        ), { duration: 6000 });
-        return;
+        setDeleteLinkedReportId(linkedReportId || null);
+        setDeleteModalMessage('This study is linked to an existing report. Open the report to manage it, or cancel to keep the upload.');
+        setIsDeletingUpload(false);
+      } else {
+        const message = error.response?.data?.error || 'Failed to delete upload';
+        toast.error(message);
+        console.error('Delete failed:', error);
+        setIsDeletingUpload(false);
+        closeDeleteModal();
       }
-      toast.error('Failed to delete upload');
-      console.error('Delete failed:', error);
-    } finally {
-      if (deleteConfirmationTimer.current) {
-        clearTimeout(deleteConfirmationTimer.current);
-        deleteConfirmationTimer.current = null;
-      }
-      setDeleteConfirmation({ id: null, expiresAt: 0 });
     }
   };
 
@@ -461,15 +578,37 @@ const UploadViewerPage = () => {
   };
 
   const handleGenerate = async () => {
-    if (!selectedUpload || reportState.isGenerating) return;
+    if (!selectedUpload || reportState.isGenerating || !canGenerate) return;
+    if (savedIndicatorTimer.current) {
+      clearTimeout(savedIndicatorTimer.current);
+      savedIndicatorTimer.current = null;
+    }
+    setShowSavedIndicator(false);
     setReportState((prev) => ({ ...prev, isGenerating: true, error: null }));
 
     try {
       const result = await generateUploadReport(selectedUpload.id, {
-        study_description: selectedUpload.originalFilename,
+        study_description: studyTitle || selectedUpload.originalFilename,
         modality: selectedUpload.modality,
-        clinical_context: ''
+        clinical_context: studySummary || ''
       });
+
+      const resultMessage = typeof result?.msg === 'string' ? result.msg.trim() : '';
+      const generationSucceeded = result?.isSuccess !== false;
+
+      if (!generationSucceeded) {
+        const failureMessage = resultMessage || 'AI generation failed';
+        setReportState((prev) => ({
+          ...prev,
+          isGenerating: false,
+          findings: '',
+          impression: '',
+          hasUnsavedChanges: false,
+          error: failureMessage
+        }));
+        toast.error(failureMessage);
+        return;
+      }
 
       const findings = Array.isArray(result.findings) ? result.findings.join('\n') : (result.findings || '');
       const impression = Array.isArray(result.impression) ? result.impression.join('\n') : (result.impression || '');
@@ -484,15 +623,72 @@ const UploadViewerPage = () => {
       }));
       toast.success('AI draft generated. Click Save to create a version.');
     } catch (error) {
-      setReportState((prev) => ({ ...prev, isGenerating: false, error: 'Failed to generate AI report' }));
-      toast.error('Failed to generate AI report');
+      const message = error?.response?.data?.error || 'Failed to generate AI report';
+      setReportState((prev) => ({ ...prev, isGenerating: false, error: message }));
+      toast.error(message);
       console.error('AI generation failed:', error);
+    }
+  };
+
+  const handleSaveMetadata = async () => {
+    if (!selectedUpload) return;
+    const trimmedTitle = studyTitle.trim();
+    const trimmedSummary = studySummary.trim();
+    if (!trimmedTitle) {
+      toast.error('Study name is required');
+      return;
+    }
+
+    try {
+      if (savedIndicatorTimer.current) {
+        clearTimeout(savedIndicatorTimer.current);
+        savedIndicatorTimer.current = null;
+      }
+      setShowSavedIndicator(false);
+      setIsMetadataSaving(true);
+      let reportId = reportState.reportId;
+      if (!reportId) {
+        reportId = await ensureReportExists();
+        setReportState((prev) => ({ ...prev, reportId }));
+      }
+
+      const descriptor = trimmedSummary ? `${trimmedTitle}\n\n${trimmedSummary}` : trimmedTitle;
+      await api.put(`/reports/${reportId}/description`, {
+        study_description: descriptor
+      });
+
+      setStudyTitle(trimmedTitle);
+      setStudySummary(trimmedSummary);
+      setMetadataDirty(false);
+      setUploads((prev) =>
+        prev.map((item) =>
+          item.id === selectedUpload.id
+            ? { ...item, displayTitle: trimmedTitle, displayDescription: trimmedSummary }
+            : item
+        )
+      );
+      setShowSavedIndicator(true);
+      savedIndicatorTimer.current = setTimeout(() => {
+        setShowSavedIndicator(false);
+        savedIndicatorTimer.current = null;
+      }, 2400);
+      toast.success('Draft updated');
+    } catch (error) {
+      console.error('Save metadata failed:', error);
+      toast.error('Failed to save study details');
+    } finally {
+      setIsMetadataSaving(false);
     }
   };
 
   const handleSaveReport = async () => {
     if (!selectedUpload || !reportState.hasUnsavedChanges || reportState.isSaving) return;
 
+    if (savedIndicatorTimer.current) {
+      clearTimeout(savedIndicatorTimer.current);
+      savedIndicatorTimer.current = null;
+    }
+    setShowSavedIndicator(false);
     setReportState((prev) => ({ ...prev, isSaving: true, error: null }));
 
     try {
@@ -508,6 +704,14 @@ const UploadViewerPage = () => {
 
       setReportState((prev) => ({ ...prev, isSaving: false, reportId }));
       upsertVersionLocally(saved);
+      if (savedIndicatorTimer.current) {
+        clearTimeout(savedIndicatorTimer.current);
+      }
+      setShowSavedIndicator(true);
+      savedIndicatorTimer.current = setTimeout(() => {
+        setShowSavedIndicator(false);
+        savedIndicatorTimer.current = null;
+      }, 2400);
       toast.success('Report saved');
     } catch (error) {
       if (error.response?.data?.code === 'NO_CHANGES') {
@@ -530,11 +734,36 @@ const UploadViewerPage = () => {
   };
 
   const handleFieldChange = (field, value) => {
+    if (savedIndicatorTimer.current) {
+      clearTimeout(savedIndicatorTimer.current);
+      savedIndicatorTimer.current = null;
+    }
+    setShowSavedIndicator(false);
     setReportState((prev) => ({
       ...prev,
       [field]: value,
       hasUnsavedChanges: true
     }));
+  };
+
+  const handleStudyTitleChange = (value) => {
+    if (savedIndicatorTimer.current) {
+      clearTimeout(savedIndicatorTimer.current);
+      savedIndicatorTimer.current = null;
+    }
+    setShowSavedIndicator(false);
+    setStudyTitle(value);
+    setMetadataDirty(true);
+  };
+
+  const handleStudySummaryChange = (value) => {
+    if (savedIndicatorTimer.current) {
+      clearTimeout(savedIndicatorTimer.current);
+      savedIndicatorTimer.current = null;
+    }
+    setShowSavedIndicator(false);
+    setStudySummary(value);
+    setMetadataDirty(true);
   };
 
   const handleVersionChange = (event) => {
@@ -583,18 +812,23 @@ const UploadViewerPage = () => {
       <button
         type="button"
         onClick={() => setIsUploadMenuOpen((prev) => !prev)}
-        className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600"
+        aria-label="Manage studies"
+        aria-haspopup="menu"
+        aria-expanded={isUploadMenuOpen}
+        className="group relative inline-flex min-w-[130px] items-center justify-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-[0_18px_35px_-18px_rgba(37,99,235,0.9)] transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_45px_-18px_rgba(37,99,235,0.95)] focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
       >
-        <LayoutList className="h-4 w-4" />
-        {selectedUpload ? 'Change study' : 'Select a study'}
+        <span className="pointer-events-none absolute inset-0 bg-blue-500/30 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+        <span className="pointer-events-none absolute inset-0 scale-[1.4] bg-blue-400/20 blur-[30px] opacity-0 transition group-hover:opacity-90" />
+        <FolderOpen className="relative h-4 w-4" />
+        <span className="relative">Manage Studies</span>
       </button>
       {isUploadMenuOpen && (
         <div className="absolute right-0 z-30 mt-2 w-80 max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
           <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">Uploads</span>
+            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">Your Studies</span>
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-soft transition hover:bg-blue-500">
               <UploadCloud className="h-3.5 w-3.5" />
-              Upload
+              Add Study
               <input
                 type="file"
                 multiple
@@ -614,8 +848,7 @@ const UploadViewerPage = () => {
               uploads.map((upload) => {
                 const isActive = upload.id === selectedUploadId;
                 const Icon = upload.type === 'dicom' ? Film : FileImage;
-                const isDeleteConfirming =
-                  deleteConfirmation.id === upload.id && deleteConfirmation.expiresAt > Date.now();
+                const deleteBusy = isDeletingUpload && deleteTarget?.id === upload.id;
                 return (
                   <button
                     key={upload.id}
@@ -623,6 +856,7 @@ const UploadViewerPage = () => {
                     onClick={() => {
                       setSelectedUploadId(upload.id);
                       setIsUploadMenuOpen(false);
+                      toast.dismiss();
                     }}
                     className={`group flex w-full items-start gap-2 rounded-md border px-2.5 py-2 text-left text-sm transition ${
                       isActive ? 'border-blue-300 bg-blue-50 text-blue-900' : 'border-slate-200 bg-white hover:border-blue-200 hover:bg-blue-50'
@@ -630,7 +864,11 @@ const UploadViewerPage = () => {
                   >
                     <Icon className={`h-3.5 w-3.5 ${isActive ? 'text-blue-500' : 'text-slate-400'}`} />
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium leading-tight line-clamp-2">{upload.originalFilename}</p>
+                      <p className="text-sm font-medium leading-tight line-clamp-2">
+                        {upload.id === selectedUploadId
+                          ? (studyTitle || upload.originalFilename)
+                          : upload.displayTitle || upload.originalFilename}
+                      </p>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.7rem] text-slate-500">
                         <span>{upload.isDicom ? 'DICOM' : 'Image'}</span>
                         {upload.modality && <span>{upload.modality}</span>}
@@ -640,15 +878,20 @@ const UploadViewerPage = () => {
                     </div>
                     <button
                       type="button"
-                      onClick={(event) => handleDelete(upload.id, event)}
+                      onClick={(event) => openDeleteModal(upload, event)}
+                      disabled={deleteBusy}
                       className={`rounded-full border p-1 transition ${
-                        isDeleteConfirming
-                          ? 'border-red-400 bg-red-50 text-red-600 hover:bg-red-100 hover:text-red-700'
+                        deleteBusy
+                          ? 'border-red-200 bg-red-50 text-red-400 opacity-60'
                           : 'border-transparent text-slate-400 hover:border-red-200 hover:bg-red-50 hover:text-red-600'
                       }`}
-                      title={isDeleteConfirming ? 'Click again to permanently delete' : 'Delete upload'}
+                      title="Delete upload"
                     >
-                      <Trash2 className={`h-3 w-3 ${isDeleteConfirming ? 'animate-pulse' : ''}`} />
+                      {deleteBusy ? (
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                      ) : (
+                        <Trash2 className="h-3 w-3" />
+                      )}
                     </button>
                   </button>
                 );
@@ -719,13 +962,13 @@ const UploadViewerPage = () => {
   const renderReportPanel = () => {
     return (
       <aside className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
-        <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 px-4 py-3">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-2 md:flex-nowrap">
+          <div className="flex items-center gap-3 flex-shrink-0">
             <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Version</span>
             <select
               value={reportState.activeVersion != null ? String(reportState.activeVersion) : ''}
               onChange={handleVersionChange}
-              className="h-8 min-w-[160px] rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="h-8 w-28 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={!versionsSorted.length && !reportState.hasUnsavedChanges}
             >
               {(reportState.hasUnsavedChanges || !versionsSorted.length) && (
@@ -744,18 +987,13 @@ const UploadViewerPage = () => {
             </select>
           </div>
 
-          {reportState.lastSavedAt && (
-            <span className="text-xs text-slate-400">
-              Saved {format(reportState.lastSavedAt, 'HH:mm')}
-            </span>
-          )}
-
-          <div className="ml-auto flex flex-wrap items-center gap-2">
+          <div className="ml-auto flex items-center gap-2 flex-shrink-0">
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={!selectedUpload || reportState.isGenerating}
+              disabled={!canGenerate || reportState.isGenerating}
               className="inline-flex h-8 items-center gap-1 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
+              title={!canGenerate ? 'Upload a study with a viewable preview to generate a draft' : 'Generate AI draft'}
             >
               {reportState.isGenerating ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -777,13 +1015,33 @@ const UploadViewerPage = () => {
               )}
               Save
             </button>
+            {showSavedIndicator && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-1 text-[0.65rem] font-semibold text-green-600">
+                <CheckCircle2 className="h-3 w-3" />
+                Draft saved
+              </span>
+            )}
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
           {selectedUpload && (
-            <div className="rounded-md border border-slate-100 bg-slate-50 px-3 py-2 text-xs text-slate-500">
-              <span className="font-semibold text-slate-600">{selectedUpload.originalFilename}</span>
+            <div className="flex items-start justify-between gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Study File</span>
+                <div
+                  className="mt-1 flex min-w-0 items-baseline gap-1 text-sm font-semibold text-slate-700"
+                  title={resolvedFilename}
+                >
+                  <span className="truncate">{splitFilename.base}</span>
+                  {splitFilename.ext && <span className="flex-shrink-0">{splitFilename.ext}</span>}
+                </div>
+              </div>
+              {reportState.lastSavedAt && (
+                <span className="mt-1 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.65rem] font-semibold text-emerald-600">
+                  Saved {format(reportState.lastSavedAt, 'HH:mm')}
+                </span>
+              )}
             </div>
           )}
 
@@ -857,15 +1115,65 @@ const UploadViewerPage = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden px-6 py-4">
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-medical">
-        <div className="flex items-center gap-3 text-sm text-slate-600">
-          <span className="inline-flex items-center gap-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
-            Demo
-          </span>
-          <span>Select a study to preview</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {renderUploadsDropdown()}
+      <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 shadow-medical">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex-1 min-w-0">
+            {hasSavedDraft && selectedUpload ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  {metadataDirty && (
+                    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Unsaved details
+                    </span>
+                  )}
+                </div>
+                <input
+                  value={studyTitle}
+                  onChange={(event) => handleStudyTitleChange(event.target.value)}
+                  placeholder="Study name"
+                  maxLength={80}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                />
+                <textarea
+                  value={studySummary}
+                  onChange={(event) => handleStudySummaryChange(event.target.value)}
+                  placeholder="Add a short description for this study"
+                  rows={2}
+                  className="w-full resize-none rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-600 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300"
+                  maxLength={220}
+                />
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <h1 className="text-lg font-semibold text-slate-800">
+                  Preview a study with BlueLight and draft a clinical report.
+                </h1>
+                <p className="max-w-xl text-sm text-slate-600">
+                  Upload a DICOM or medical image to open it in the viewer, then capture findings and impressions side by side.
+                </p>
+              </div>
+            )}
+          </div>
+          <div className="flex w-full flex-col items-stretch gap-3 sm:w-auto sm:items-end">
+            <div className="flex justify-end">
+              {renderUploadsDropdown()}
+            </div>
+            <button
+              type="button"
+              onClick={handleSaveMetadata}
+              disabled={!metadataSaveEnabled || isMetadataSaving}
+              aria-label="Save report metadata"
+              className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isMetadataSaving ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Save className="h-4 w-4" />
+              )}
+              <span>Save Report</span>
+            </button>
+          </div>
         </div>
       </div>
 
@@ -877,6 +1185,75 @@ const UploadViewerPage = () => {
           {renderReportPanel()}
         </div>
       </div>
+
+      {deleteModalOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-center justify-center bg-slate-950/40 px-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => {
+            if (!isDeletingUpload) closeDeleteModal();
+          }}
+        >
+          <div
+            className="w-full max-w-md overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="border-b border-slate-200 px-4 py-3">
+              <h3 className="text-sm font-semibold text-slate-900">
+                {deleteLinkedReportId ? 'Linked report detected' : 'Remove study'}
+              </h3>
+            </div>
+            <div className="px-4 py-4 text-sm text-slate-600 space-y-2">
+              <p>
+                {deleteModalMessage || (deleteTarget ? `Remove "${deleteTarget.originalFilename}" from Demo?` : '')}
+              </p>
+              {deleteLinkedReportId && (
+                <p className="text-xs text-slate-500">
+                  This study is attached to a report. Open the report to manage it, or cancel to keep the upload.
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-slate-200 px-4 py-3">
+              <button
+                type="button"
+                onClick={closeDeleteModal}
+                disabled={isDeletingUpload}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-sm font-medium text-slate-600 transition hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeleteUpload}
+                disabled={isDeletingUpload && !deleteLinkedReportId}
+                className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-semibold transition focus:outline-none focus:ring-2 focus:ring-offset-1 ${
+                  deleteLinkedReportId
+                    ? 'border border-blue-200 bg-blue-50 text-blue-600 hover:bg-blue-100 focus:ring-blue-300'
+                    : 'border border-rose-200 bg-rose-50 text-rose-600 hover:bg-rose-100 focus:ring-rose-300'
+                } ${isDeletingUpload && !deleteLinkedReportId ? 'opacity-60' : ''}`}
+              >
+                {deleteLinkedReportId ? (
+                  <>
+                    <FileText className="h-4 w-4" />
+                    View report
+                  </>
+                ) : isDeletingUpload ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

@@ -7,6 +7,11 @@ const { validateRequest, validateParams, schemas } = require('../middleware/vali
 const { createAuditLog } = require('../utils/audit');
 const { callLLM } = require('../services/llm');
 
+const LLM_TEST_PLACEHOLDER_IMAGE = {
+    base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAusB9AlvK+sAAAAASUVORK5CYII=',
+    mimeType: 'image/png'
+};
+
 const router = express.Router();
 
 // All routes require admin role
@@ -848,7 +853,12 @@ router.post('/llm-configs/:configId/test',
                 studyDescription: 'Health check',
                 modality: 'GEN',
                 clinicalContext: 'Ping',
-                previousContent: ''
+                previousContent: '',
+                dicom: {
+                    imageBase64: LLM_TEST_PLACEHOLDER_IMAGE.base64,
+                    imageMimeType: LLM_TEST_PLACEHOLDER_IMAGE.mimeType,
+                    studyInstanceUID: 'LLM-CONFIG-TEST'
+                }
             });
             const latency = Date.now() - start;
 

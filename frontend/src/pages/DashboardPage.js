@@ -349,13 +349,10 @@ const DashboardPage = () => {
               key={section.title}
               className="rounded-2xl border border-slate-200 bg-white p-8 shadow-medical"
             >
-              <div className="text-center mb-8">
-                <h2 className="text-2xl font-bold text-slate-800 mb-2">
+              <div className="text-center mb-6">
+                <h2 className="text-2xl font-bold text-slate-800">
                   {section.title}
                 </h2>
-                <p className="text-slate-600">
-                  Choose from the available workspaces below
-                </p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -371,11 +368,8 @@ const DashboardPage = () => {
                           <item.icon className="h-8 w-8" />
                         </div>
                       </div>
-                      <div className="space-y-2">
+                      <div className="space-y-1.5">
                         <h3 className="text-xl font-bold text-slate-800">{item.name}</h3>
-                        {item.description && (
-                          <p className="text-slate-600 leading-relaxed">{item.description}</p>
-                        )}
                       </div>
                       <div className="pt-2">
                         <span className="inline-flex items-center text-lg font-semibold text-primary-600 group-hover:text-primary-700 transition-colors">

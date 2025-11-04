@@ -1,5 +1,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
+const path = require('path');
+const fs = require('fs');
 
 const { getDB } = require('../database/connection');
 const { logger } = require('../utils/logger');
@@ -7,8 +9,117 @@ const { authenticateToken, requireAnyRole, checkReportAccess } = require('../mid
 const { validateRequest, validateParams, validateQuery, schemas } = require('../middleware/validation');
 const { createAuditLog } = require('../utils/audit');
 const { generateAIReport } = require('../services/llm');
+const { convertDicomToImage } = require('../utils/dicomConverter');
 
 const router = express.Router();
+const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
+
+const toAbsoluteUploadPath = (filePath) => {
+    if (!filePath) return null;
+    return path.isAbsolute(filePath) ? filePath : path.join(UPLOAD_ROOT, filePath);
+};
+
+const resolveUploadPreview = async (db, studyInstanceUID, hostOrigin) => {
+    if (!studyInstanceUID) return null;
+
+    try {
+        const result = await db.query(
+            `SELECT id, stored_filename, converted_image_path, is_dicom, mime_type
+             FROM uploads
+             WHERE study_instance_uid = $1
+               AND status = 'ready'
+             ORDER BY updated_at DESC
+             LIMIT 1`,
+            [studyInstanceUID]
+        );
+
+        if (result.rows.length === 0) {
+            return null;
+        }
+
+        const upload = result.rows[0];
+        const downloadUrl = `${hostOrigin}/api/uploads/${upload.id}/file`;
+        let imageUrl = downloadUrl;
+        let imageMimeType = upload.mime_type || 'image/jpeg';
+        let imagePath = null;
+
+        if (upload.is_dicom) {
+            const storedPath = toAbsoluteUploadPath(upload.stored_filename);
+            if (!storedPath || !fs.existsSync(storedPath)) {
+                logger.warn('Stored DICOM missing for preview', { studyInstanceUID, uploadId: upload.id });
+                return { downloadUrl, imageUrl: '', imageMimeType: '', imagePath: '' };
+            }
+
+            let convertedPath = toAbsoluteUploadPath(upload.converted_image_path);
+            if (!convertedPath || !fs.existsSync(convertedPath)) {
+                try {
+                    const baseName = path.parse(storedPath).name;
+                    const convertedAbsolutePath = await convertDicomToImage(
+                        storedPath,
+                        path.dirname(storedPath),
+                        baseName
+                    );
+                    convertedPath = convertedAbsolutePath;
+                    imagePath = convertedAbsolutePath;
+                    const relativePath = path.relative(UPLOAD_ROOT, convertedAbsolutePath);
+                    try {
+                        await db.query(
+                            `UPDATE uploads
+                             SET converted_image_path = $1,
+                                 updated_at = CURRENT_TIMESTAMP
+                             WHERE id = $2`,
+                            [relativePath, upload.id]
+                        );
+                    } catch (updateError) {
+                        if (updateError.code !== '42703') {
+                            logger.warn('Failed to persist converted preview path for report', {
+                                uploadId: upload.id,
+                                updateError: updateError.message
+                            });
+                        }
+                    }
+                } catch (conversionError) {
+                    logger.warn('DICOM conversion failed for report preview', {
+                        studyInstanceUID,
+                        uploadId: upload.id,
+                        error: conversionError.message
+                    });
+                    return { downloadUrl, imageUrl: '', imageMimeType: '', imagePath: '' };
+                }
+            } else {
+                imagePath = convertedPath;
+            }
+
+            imageUrl = `${hostOrigin}/api/uploads/${upload.id}/converted`;
+            const ext = path.extname(convertedPath).toLowerCase();
+            if (ext === '.png') imageMimeType = 'image/png';
+            else if (ext === '.webp') imageMimeType = 'image/webp';
+            else imageMimeType = 'image/jpeg';
+        } else {
+            const storedPath = toAbsoluteUploadPath(upload.stored_filename);
+            if (storedPath && fs.existsSync(storedPath)) {
+                imagePath = storedPath;
+            }
+        }
+
+        return {
+            downloadUrl,
+            imageUrl,
+            imageMimeType,
+            imagePath: imagePath || ''
+        };
+    } catch (error) {
+        if (error.code === '42P01') {
+            // uploads table not initialized yet
+            return null;
+        }
+        logger.warn('Failed to resolve upload preview for report', {
+            studyInstanceUID,
+            error: error.message
+        });
+        return null;
+    }
+};
 
 // All routes require authentication
 router.use(authenticateToken);
@@ -564,7 +675,7 @@ router.post('/:reportId/generate-preview',
             const report = reportResult.rows[0];
             
             // Build DICOM context URLs
-            let dicom = { studyInstanceUID: report.study_instance_uid };
+            let dicom = { studyInstanceUID: report.study_instance_uid, imagePath: '' };
             try {
                 const pacs = await db.query('SELECT pacs_url FROM pacs_config LIMIT 1');
                 if (pacs.rows.length && pacs.rows[0].pacs_url) {
@@ -574,7 +685,20 @@ router.post('/:reportId/generate-preview',
                 }
             } catch (_) {}
             // Local download proxy
-            dicom.downloadUrl = `${req.protocol}://${req.get('host')}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download`;
+            const hostOrigin = `${req.protocol}://${req.get('host')}`;
+            dicom.downloadUrl = `${hostOrigin}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download`;
+
+            const preview = await resolveUploadPreview(db, report.study_instance_uid, hostOrigin);
+            if (preview) {
+                dicom.downloadUrl = preview.downloadUrl || dicom.downloadUrl;
+                dicom.imageUrl = preview.imageUrl || '';
+                dicom.imageMimeType = preview.imageMimeType || 'image/jpeg';
+                dicom.imagePath = preview.imagePath || '';
+            } else {
+                dicom.imageUrl = '';
+                dicom.imageMimeType = 'image/jpeg';
+                dicom.imagePath = '';
+            }
             
             // Generate AI content
             const aiResult = await generateAIReport({
@@ -595,6 +719,9 @@ router.post('/:reportId/generate-preview',
             });
         } catch (error) {
             logger.error('Generate AI report preview error:', error);
+            if (error && /image preview required/i.test(error.message || '')) {
+                return res.status(400).json({ error: 'Preview image unavailable for AI generation' });
+            }
             res.status(500).json({ error: 'Failed to generate AI report preview' });
         }
     }
@@ -631,7 +758,7 @@ router.post('/:reportId/generate',
             const report = reportResult.rows[0];
             
             // Build DICOM context URLs
-            let dicom = { studyInstanceUID: report.study_instance_uid };
+            let dicom = { studyInstanceUID: report.study_instance_uid, imagePath: '' };
             try {
                 const pacs = await db.query('SELECT pacs_url FROM pacs_config LIMIT 1');
                 if (pacs.rows.length && pacs.rows[0].pacs_url) {
@@ -641,7 +768,20 @@ router.post('/:reportId/generate',
                 }
             } catch (_) {}
             // Local download proxy
-            dicom.downloadUrl = `${req.protocol}://${req.get('host')}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download`;
+            const hostOrigin = `${req.protocol}://${req.get('host')}`;
+            dicom.downloadUrl = `${hostOrigin}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download`;
+
+            const preview = await resolveUploadPreview(db, report.study_instance_uid, hostOrigin);
+            if (preview) {
+                dicom.downloadUrl = preview.downloadUrl || dicom.downloadUrl;
+                dicom.imageUrl = preview.imageUrl || '';
+                dicom.imageMimeType = preview.imageMimeType || 'image/jpeg';
+                dicom.imagePath = preview.imagePath || '';
+            } else {
+                dicom.imageUrl = '';
+                dicom.imageMimeType = 'image/jpeg';
+                dicom.imagePath = '';
+            }
             
             // Generate AI content
             const aiResult = await generateAIReport({
@@ -683,6 +823,9 @@ router.post('/:reportId/generate',
             res.json(result.rows[0]);
         } catch (error) {
             logger.error('Generate AI report error:', error);
+            if (error && /image preview required/i.test(error.message || '')) {
+                return res.status(400).json({ error: 'Preview image unavailable for AI generation' });
+            }
             res.status(500).json({ error: 'Failed to generate AI report' });
         }
     }
@@ -748,7 +891,7 @@ router.put('/:reportId/versions/latest',
 
 // Update report description (Doctor only, owner only, not finalized)
 router.put('/:reportId/description',
-    requireAnyRole(['doctor']),
+    requireAnyRole(['doctor', 'observer']),
     validateParams({ reportId: schemas.uuid }),
     validateRequest(schemas.updateReportDescription),
     async (req, res) => {
@@ -758,14 +901,59 @@ router.put('/:reportId/description',
             const db = getDB();
 
             // Ensure report exists, is owned by doctor, and not finalized
-            const repRes = await db.query(
-                `SELECT id, doctor_id, finalized_at FROM reports WHERE id = $1 AND doctor_id = $2`,
-                [reportId, req.user.id]
-            );
-            if (repRes.rows.length === 0) {
-                return res.status(404).json({ error: 'Report not found' });
+            const scopedQuery = `
+                SELECT id, doctor_id, finalized_at, study_instance_uid
+                FROM reports
+                WHERE id = $1 AND doctor_id = $2
+            `;
+            const fallbackQuery = `
+                SELECT id, doctor_id, finalized_at, study_instance_uid
+                FROM reports
+                WHERE id = $1
+            `;
+
+            let reportRow = null;
+            const scopedResult = await db.query(scopedQuery, [reportId, req.user.id]);
+
+            if (scopedResult.rows.length) {
+                reportRow = scopedResult.rows[0];
+            } else {
+                const fallbackResult = await db.query(fallbackQuery, [reportId]);
+                if (fallbackResult.rows.length === 0) {
+                    return res.status(404).json({ error: 'Report not found' });
+                }
+                reportRow = fallbackResult.rows[0];
+
+                if (req.user.role === 'doctor') {
+                    return res.status(403).json({ error: 'Not authorized to edit this report' });
+                }
+
+                if (req.user.role === 'observer') {
+                    try {
+                        const accessCheck = await db.query(
+                            `SELECT 1
+                             FROM uploads
+                             WHERE study_instance_uid = $1
+                               AND user_id = $2
+                               AND status = 'ready'
+                             LIMIT 1`,
+                            [reportRow.study_instance_uid, req.user.id]
+                        );
+                        if (accessCheck.rows.length === 0) {
+                            return res.status(403).json({ error: 'Not authorized to edit this report' });
+                        }
+                    } catch (accessError) {
+                        if (accessError.code === '42P01') {
+                            return res.status(403).json({ error: 'Not authorized to edit this report' });
+                        }
+                        throw accessError;
+                    }
+                } else {
+                    return res.status(403).json({ error: 'Not authorized to edit this report' });
+                }
             }
-            if (repRes.rows[0].finalized_at) {
+
+            if (reportRow.finalized_at) {
                 return res.status(400).json({ error: 'Cannot edit a finalized report' });
             }
 

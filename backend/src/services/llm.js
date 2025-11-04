@@ -1,3 +1,4 @@
+const fs = require('fs');
 const axios = require('axios');
 const { getDB } = require('../database/connection');
 const { logger } = require('../utils/logger');
@@ -5,6 +6,60 @@ const { logger } = require('../utils/logger');
 /**
  * Main function to generate AI report
  */
+const imageCache = new Map();
+
+const fsp = fs.promises;
+
+const fetchImageAsBase64 = async (source) => {
+    const descriptor = typeof source === 'string' ? { url: source } : (source || {});
+    const { url, localPath, base64 } = descriptor;
+
+    if (base64) {
+        return base64;
+    }
+    const cacheKey = localPath || url;
+
+    if (!cacheKey) {
+        throw new Error('No image source provided');
+    }
+
+    if (imageCache.has(cacheKey)) {
+        return imageCache.get(cacheKey);
+    }
+
+    if (localPath) {
+        try {
+            const fileBuffer = await fsp.readFile(localPath);
+            const base64FromFile = fileBuffer.toString('base64');
+            imageCache.set(cacheKey, base64FromFile);
+            setTimeout(() => imageCache.delete(cacheKey), 5 * 60 * 1000);
+            return base64FromFile;
+        } catch (error) {
+            logger.warn('Failed to read local image for LLM attachment', { localPath, error: error.message });
+        }
+    }
+
+    if (url) {
+        try {
+            const response = await axios.get(url, {
+                responseType: 'arraybuffer',
+                timeout: 15000,
+                headers: {
+                    'Accept': 'image/png,image/jpeg,image/webp,image/*'
+                }
+            });
+            const base64 = Buffer.from(response.data).toString('base64');
+            imageCache.set(cacheKey, base64);
+            setTimeout(() => imageCache.delete(cacheKey), 5 * 60 * 1000);
+            return base64;
+        } catch (error) {
+            logger.warn('Failed to fetch image for LLM attachment', { url, error: error.message });
+        }
+    }
+
+    throw new Error('Unable to attach preview image for generation');
+};
+
 const generateAIReport = async (params) => {
     const { studyDescription, modality, clinicalContext, previousContent, dicom } = params;
     
@@ -39,6 +94,9 @@ const generateAIReport = async (params) => {
                     dicom
                 });
                 
+                const isSuccess = typeof response.isSuccess === 'boolean' ? response.isSuccess : true;
+                const message = typeof response.msg === 'string' ? response.msg.trim() : '';
+                
                 return {
                     findings: response.findings,
                     impression: response.impression,
@@ -50,7 +108,9 @@ const generateAIReport = async (params) => {
                         max_tokens: config.max_tokens,
                         top_p: config.top_p,
                         priority: config.priority
-                    }
+                    },
+                    isSuccess,
+                    msg: message
                 };
                 
             } catch (error) {
@@ -81,7 +141,9 @@ const callLLM = async (config, params) => {
         previousContent: previousContent || '',
         dicomStudyUrl: dicom?.studyUrl || '',
         dicomDownloadUrl: dicom?.downloadUrl || '',
-        studyInstanceUID: dicom?.studyInstanceUID || ''
+        studyInstanceUID: dicom?.studyInstanceUID || '',
+        imagePreviewUrl: dicom?.imageUrl || (dicom?.imageBase64 ? 'inline-preview' : ''),
+        imageMimeType: dicom?.imageMimeType || 'image/jpeg'
     };
     
     // Use config prompt or default
@@ -102,29 +164,42 @@ Study Information:
 - Previous Content: ${variables.previousContent}
 - DICOM Study URL: ${variables.dicomStudyUrl}
 - DICOM Download URL: ${variables.dicomDownloadUrl}
+- Image Preview URL: ${variables.imagePreviewUrl}
 - Study Instance UID: ${variables.studyInstanceUID}
 
 Generate a medical report with findings and impression in the required JSON format.`;
 
     // Determine API type and call
+    const hasImage = Boolean(dicom && (dicom.imageUrl || dicom.imagePath || dicom.imageBase64));
+    if (!hasImage) {
+        throw new Error('Image preview required for AI generation');
+    }
+
     const apiUrl = config.api_url.toLowerCase();
+    const imageDescriptor = {
+        url: dicom?.imageUrl || '',
+        mimeType: dicom?.imageMimeType || 'image/jpeg',
+        localPath: dicom?.imagePath || '',
+        base64: dicom?.imageBase64 || ''
+    };
     
     if (apiUrl.includes('generativelanguage.googleapis.com')) {
-        return await callGeminiAPI(config, systemPrompt, userPrompt);
+        return await callGeminiAPI(config, systemPrompt, userPrompt, imageDescriptor);
     } else if (apiUrl.includes('openai.com')) {
-        return await callOpenAIAPI(config, systemPrompt, userPrompt);
+        return await callOpenAIAPI(config, systemPrompt, userPrompt, imageDescriptor);
     } else if (apiUrl.includes('openrouter.ai') || apiUrl.includes('anthropic.com')) {
-        return await callClaudeAPI(config, systemPrompt, userPrompt);
+        return await callClaudeAPI(config, systemPrompt, userPrompt, imageDescriptor);
     } else {
-        return await callGenericAPI(config, systemPrompt, userPrompt);
+        return await callGenericAPI(config, systemPrompt, userPrompt, imageDescriptor);
     }
 };
 
 /**
  * Call Google Gemini API
  */
-const callGeminiAPI = async (config, systemPrompt, userPrompt) => {
+const callGeminiAPI = async (config, systemPrompt, userPrompt, imageDescriptor = {}) => {
     try {
+        const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
         // Ensure correct URL format for Gemini
         let apiUrl = config.api_url;
         if (!apiUrl.includes(':generateContent')) {
@@ -137,10 +212,25 @@ const callGeminiAPI = async (config, systemPrompt, userPrompt) => {
             }
         }
         
+        const parts = [{ text: `${systemPrompt}\n\n${userPrompt}` }];
+
+        if (imageUrl || localPath || base64) {
+            const base64Image = await fetchImageAsBase64({ url: imageUrl, localPath, base64 });
+            if (!base64Image) {
+                throw new Error('Unable to prepare image preview for Gemini');
+            }
+            parts.push({
+                inlineData: {
+                    mimeType,
+                    data: base64Image
+                }
+            });
+        }
+
         const payload = {
             contents: [{
                 role: 'user',
-                parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
+                parts
             }]
         };
         
@@ -181,13 +271,34 @@ const callGeminiAPI = async (config, systemPrompt, userPrompt) => {
 /**
  * Call OpenAI API
  */
-const callOpenAIAPI = async (config, systemPrompt, userPrompt) => {
+const callOpenAIAPI = async (config, systemPrompt, userPrompt, imageDescriptor = {}) => {
     try {
+        const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
+        const supportsVision =
+            typeof config.model_name === 'string' &&
+            /(gpt-4o|gpt-4-turbo|gpt-4-vision|gpt-4.1|gpt-4o-mini|gpt-4\.1|gpt-4\.0|o1|o3)/i.test(config.model_name);
+
+        if (!supportsVision) {
+            throw new Error('Selected OpenAI model does not support image inputs');
+        }
+
+        if (!imageUrl && !localPath && !base64) {
+            throw new Error('Image preview required for OpenAI vision models');
+        }
+
+        const base64Image = await fetchImageAsBase64({ url: imageUrl, localPath, base64 });
+        const dataUrl = `data:${mimeType};base64,${base64Image}`;
+
+        const userContent = [
+            { type: 'text', text: userPrompt },
+            { type: 'image_url', image_url: { url: dataUrl } }
+        ];
+
         const payload = {
             model: config.model_name,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
+                { role: 'user', content: userContent }
             ]
         };
         
@@ -215,21 +326,78 @@ const callOpenAIAPI = async (config, systemPrompt, userPrompt) => {
 /**
  * Call Claude/Anthropic API (via OpenRouter)
  */
-const callClaudeAPI = async (config, systemPrompt, userPrompt) => {
+const callClaudeAPI = async (config, systemPrompt, userPrompt, imageDescriptor = {}) => {
     try {
+        const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
+
+        if (!imageUrl && !localPath && !base64) {
+            throw new Error('Image preview required for Claude vision models');
+        }
+
+        const isAnthropic = /anthropic\.com/.test(config.api_url);
+        const base64Image = await fetchImageAsBase64({ url: imageUrl, localPath, base64 });
+
+        if (isAnthropic) {
+            const payload = {
+                model: config.model_name,
+                system: systemPrompt,
+                messages: [
+                    {
+                        role: 'user',
+                        content: [
+                            { type: 'text', text: userPrompt },
+                            {
+                                type: 'image',
+                                source: {
+                                    type: 'base64',
+                                    media_type: mimeType,
+                                    data: base64Image
+                                }
+                            }
+                        ]
+                    }
+                ]
+            };
+
+            if (config.temperature != null) payload.temperature = parseFloat(config.temperature);
+            if (config.max_tokens != null) payload.max_output_tokens = parseInt(config.max_tokens);
+            if (config.top_p != null) payload.top_p = parseFloat(config.top_p);
+
+            const response = await axios.post(config.api_url, payload, {
+                headers: {
+                    'Content-Type': 'application/json',
+                    'x-api-key': config.api_key,
+                    'anthropic-version': '2023-06-01'
+                },
+                timeout: 30000
+            });
+
+            const content = Array.isArray(response.data?.content)
+                ? response.data.content.map((part) => part?.text || '').join('\n').trim()
+                : '';
+
+            return parseResponse(content);
+        }
+
+        const dataUrl = `data:${mimeType};base64,${base64Image}`;
         const payload = {
             model: config.model_name,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
+                {
+                    role: 'user',
+                    content: [
+                        { type: 'text', text: userPrompt },
+                        { type: 'image_url', image_url: { url: dataUrl } }
+                    ]
+                }
             ]
         };
-        
-        // Add optional parameters
+
         if (config.temperature != null) payload.temperature = parseFloat(config.temperature);
         if (config.max_tokens != null) payload.max_tokens = parseInt(config.max_tokens);
         if (config.top_p != null) payload.top_p = parseFloat(config.top_p);
-        
+
         const response = await axios.post(config.api_url, payload, {
             headers: {
                 'Content-Type': 'application/json',
@@ -237,10 +405,10 @@ const callClaudeAPI = async (config, systemPrompt, userPrompt) => {
             },
             timeout: 30000
         });
-        
+
         const content = response.data.choices?.[0]?.message?.content || '';
         return parseResponse(content);
-        
+
     } catch (error) {
         throw new Error(`Claude API call failed: ${error.message}`);
     }
@@ -249,13 +417,24 @@ const callClaudeAPI = async (config, systemPrompt, userPrompt) => {
 /**
  * Call generic OpenAI-compatible API
  */
-const callGenericAPI = async (config, systemPrompt, userPrompt) => {
+const callGenericAPI = async (config, systemPrompt, userPrompt, imageDescriptor = {}) => {
     try {
+        const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
+        let userContent = userPrompt;
+        if (imageUrl || localPath || base64) {
+            const base64Image = await fetchImageAsBase64({ url: imageUrl, localPath, base64 });
+            const dataUrl = `data:${mimeType};base64,${base64Image}`;
+            userContent = [
+                { type: 'text', text: userPrompt },
+                { type: 'image_url', image_url: { url: dataUrl } }
+            ];
+        }
+
         const payload = {
             model: config.model_name,
             messages: [
                 { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
+                { role: 'user', content: userContent }
             ]
         };
         
@@ -292,11 +471,16 @@ const parseResponse = (content) => {
         const jsonMatch = cleanContent.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
             const parsed = JSON.parse(jsonMatch[0]);
-            if (parsed.findings && parsed.impression) {
-                return {
-                    findings: Array.isArray(parsed.findings) ? parsed.findings : [parsed.findings],
-                    impression: Array.isArray(parsed.impression) ? parsed.impression : [parsed.impression]
-                };
+            if (parsed && typeof parsed === 'object') {
+                const findings = parsed.findings
+                    ? (Array.isArray(parsed.findings) ? parsed.findings : [parsed.findings])
+                    : ['- Generated content available'];
+                const impression = parsed.impression
+                    ? (Array.isArray(parsed.impression) ? parsed.impression : [parsed.impression])
+                    : ['- Please review generated content'];
+                const isSuccess = typeof parsed.isSuccess === 'boolean' ? parsed.isSuccess : true;
+                const msg = typeof parsed.msg === 'string' ? parsed.msg.trim() : '';
+                return { findings, impression, isSuccess, msg };
             }
         }
         
@@ -304,16 +488,27 @@ const parseResponse = (content) => {
         const findingsMatch = content.match(/FINDINGS?:?\s*([\s\S]*?)(?=IMPRESSION|$)/i);
         const impressionMatch = content.match(/IMPRESSION:?\s*([\s\S]*?)$/i);
         
-        const findings = findingsMatch ? findingsMatch[1].trim().split('\n').filter(Boolean) : ['- Generated content available'];
-        const impression = impressionMatch ? impressionMatch[1].trim().split('\n').filter(Boolean) : ['- Please review generated content'];
+        const findings = findingsMatch
+            ? findingsMatch[1].trim().split('\n').filter(Boolean)
+            : ['- Generated content available'];
+        const impression = impressionMatch
+            ? impressionMatch[1].trim().split('\n').filter(Boolean)
+            : ['- Please review generated content'];
         
-        return { findings, impression };
+        return {
+            findings,
+            impression,
+            isSuccess: true,
+            msg: ''
+        };
         
     } catch (error) {
         logger.error('Failed to parse LLM response:', error);
         return {
             findings: ['- Unable to parse response'],
-            impression: ['- Please try again']
+            impression: ['- Please try again'],
+            isSuccess: false,
+            msg: 'generation failed'
         };
     }
 };

@@ -166,6 +166,39 @@ const resolveStudyInstanceUID = ({ uploadId, dicomMetadata, storedValue }) => {
     return createFallbackStudyInstanceUID(uploadId);
 };
 
+const cleanupEmptyDirectories = async (dirPath) => {
+    if (!dirPath) {
+        return;
+    }
+
+    const relative = path.relative(UPLOAD_ROOT, dirPath);
+    if (!relative || relative.startsWith('..')) {
+        return;
+    }
+
+    const depth = relative.split(path.sep).length;
+    if (depth <= 2) {
+        // Preserve user and year directories.
+        return;
+    }
+
+    try {
+        const entries = await fsp.readdir(dirPath);
+        if (entries.length > 0) {
+            return;
+        }
+        await fsp.rm(dirPath, { recursive: false, force: false });
+        const parent = path.dirname(dirPath);
+        if (parent && parent !== dirPath) {
+            await cleanupEmptyDirectories(parent);
+        }
+    } catch (error) {
+        if (error.code !== 'ENOENT' && error.code !== 'ENOTEMPTY') {
+            logger.warn('Failed to clean upload directory', { dirPath, error: error.message });
+        }
+    }
+};
+
 const mapUploadRow = (row, req) => {
     const isDicom = row.is_dicom || false;
     const hasConvertedImage = row.converted_image_path;
@@ -678,7 +711,12 @@ router.delete('/:uploadId', async (req, res) => {
             }
 
             const deletionSummary = [];
+            const directoriesToCheck = new Set();
             for (const fileDescriptor of fileDescriptors) {
+                const relativePath = path.relative(UPLOAD_ROOT, fileDescriptor.path);
+                if (relativePath && !relativePath.startsWith('..')) {
+                    directoriesToCheck.add(path.dirname(fileDescriptor.path));
+                }
                 try {
                     await fsp.unlink(fileDescriptor.path);
                     logger.info(`Deleted file: ${fileDescriptor.path}`);
@@ -692,6 +730,10 @@ router.delete('/:uploadId', async (req, res) => {
                         throw new Error(`Failed to delete file ${fileDescriptor.path}: ${err?.message || err}`);
                     }
                 }
+            }
+
+            for (const dir of directoriesToCheck) {
+                await cleanupEmptyDirectories(dir);
             }
 
             // Create audit log
@@ -731,29 +773,122 @@ router.post('/:uploadId/generate', async (req, res) => {
     try {
         await ensureUploadsTable();
         const db = getDB();
-        const result = await db.query(
-            `SELECT id, original_filename, mime_type
+
+        const uploadRows = await selectUploadRowsWithFallback(
+            db,
+            `SELECT id, original_filename, mime_type, stored_filename, converted_image_path, is_dicom, dicom_metadata, study_instance_uid
              FROM uploads
              WHERE id = $1
                AND user_id = $2
                AND status = 'ready'`,
-            [req.params.uploadId, req.user.id]
+            [req.params.uploadId, req.user.id],
+            `SELECT id, original_filename, mime_type, stored_filename
+             FROM uploads
+             WHERE id = $1
+               AND user_id = $2
+               AND status = 'ready'`,
+            (row) => ({
+                id: row.id,
+                original_filename: row.original_filename,
+                mime_type: row.mime_type,
+                stored_filename: row.stored_filename,
+                converted_image_path: null,
+                is_dicom: false,
+                dicom_metadata: null,
+                study_instance_uid: null
+            })
         );
 
-        if (result.rows.length === 0) {
+        if (uploadRows.length === 0) {
             return res.status(404).json({ error: 'Upload not found' });
         }
 
-        const uploadRow = result.rows[0];
-        const downloadPath = `${req.protocol}://${req.get('host')}/api/uploads/${uploadRow.id}/file`;
+        const uploadRow = uploadRows[0];
+        const originalFilePath = uploadRow.stored_filename
+            ? path.join(UPLOAD_ROOT, uploadRow.stored_filename)
+            : null;
+
+        const host = `${req.protocol}://${req.get('host')}`;
+        const downloadUrl = `${host}/api/uploads/${uploadRow.id}/file`;
+        let imageUrl = downloadUrl;
+        let convertedMimeType = 'image/jpeg';
+        let imagePath = null;
+
+        const isDicom = uploadRow.is_dicom || (uploadRow.mime_type === 'application/dicom');
+        if (!isDicom) {
+            convertedMimeType = uploadRow.mime_type || 'image/jpeg';
+            if (originalFilePath && fs.existsSync(originalFilePath)) {
+                imagePath = originalFilePath;
+            }
+        }
+        if (isDicom && originalFilePath && fs.existsSync(originalFilePath)) {
+            let convertedPath = uploadRow.converted_image_path;
+            if (!convertedPath) {
+                try {
+                    const outputDir = path.dirname(originalFilePath);
+                    const baseFileName = path.parse(uploadRow.stored_filename).name;
+                    const convertedAbsolutePath = await convertDicomToImage(
+                        originalFilePath,
+                        outputDir,
+                        baseFileName
+                    );
+                    convertedPath = path.relative(UPLOAD_ROOT, convertedAbsolutePath);
+                    imagePath = convertedAbsolutePath;
+                    try {
+                        await db.query(
+                            `UPDATE uploads
+                             SET converted_image_path = $1,
+                                 updated_at = CURRENT_TIMESTAMP
+                             WHERE id = $2`,
+                            [convertedPath, uploadRow.id]
+                        );
+                    } catch (updateError) {
+                        if (updateError.code !== '42703') {
+                            logger.warn('Failed to persist converted image path for upload', {
+                                uploadId: uploadRow.id,
+                                updateError
+                            });
+                        }
+                    }
+                } catch (conversionError) {
+                    logger.warn('DICOM conversion failed during AI generation', {
+                        uploadId: uploadRow.id,
+                        error: conversionError
+                    });
+                }
+            } else {
+                const absoluteConverted = path.join(UPLOAD_ROOT, convertedPath);
+                if (fs.existsSync(absoluteConverted)) {
+                    imagePath = absoluteConverted;
+                }
+            }
+
+            if (convertedPath) {
+                imageUrl = `${host}/api/uploads/${uploadRow.id}/converted`;
+                const ext = path.extname(convertedPath).toLowerCase();
+                if (ext === '.png') convertedMimeType = 'image/png';
+                else if (ext === '.webp') convertedMimeType = 'image/webp';
+                else convertedMimeType = 'image/jpeg';
+            }
+        }
+
+        if (isDicom && (!imageUrl || imageUrl === downloadUrl)) {
+            return res.status(400).json({
+                error: 'Unable to generate preview image for this DICOM study. Please re-upload the file or contact support.'
+            });
+        }
 
         const payload = {
             studyDescription: req.body?.study_description || uploadRow.original_filename,
             modality: req.body?.modality || null,
             clinicalContext: req.body?.clinical_context || '',
             dicom: {
-                studyInstanceUID: uploadRow.id,
-                downloadUrl: downloadPath
+                studyInstanceUID: uploadRow.study_instance_uid || uploadRow.id,
+                downloadUrl,
+                imageUrl,
+                imageMimeType: convertedMimeType,
+                studyUrl: downloadUrl,
+                imagePath: imagePath || ''
             }
         };
 
@@ -769,6 +904,9 @@ router.post('/:uploadId/generate', async (req, res) => {
         res.json(aiResult);
     } catch (error) {
         logger.error('Upload AI generation failed:', error);
+        if (error && /image preview required/i.test(error.message || '')) {
+            return res.status(400).json({ error: 'Preview image unavailable for AI generation' });
+        }
         res.status(500).json({ error: 'AI generation failed' });
     }
 });

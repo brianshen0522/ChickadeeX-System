@@ -5,7 +5,8 @@ import {
   getReport, 
   createReportVersion, 
   generateAIReport, 
-  finalizeReport 
+  finalizeReport, 
+  deleteReport 
 } from '../services/reportService';
 import { 
   ArrowLeft, 
@@ -17,7 +18,8 @@ import {
   Download,
   FileText,
   Shield,
-  Copy
+  Copy,
+  Trash2
 } from 'lucide-react';
 import { format } from 'date-fns';
 import toast from 'react-hot-toast';
@@ -39,10 +41,13 @@ const ReportDetailPage = () => {
   });
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const canEdit = ['doctor', 'observer'].includes(user?.role);
   const canFinalize = ['doctor', 'observer'].includes(user?.role);
   const canExport = ['doctor', 'researcher'].includes(user?.role);
+  const canDelete = ['doctor', 'observer'].includes(user?.role);
 
   useEffect(() => {
     fetchReport();
@@ -117,12 +122,37 @@ const ReportDetailPage = () => {
     }
   };
 
+  const handleDelete = async () => {
+    if (!canDelete) return;
+    setDeleting(true);
+    try {
+      await deleteReport(reportId);
+      toast.success('Report deleted');
+      setDeleteDialogOpen(false);
+      navigate('/reports');
+    } catch (error) {
+      const message = error?.response?.data?.error || 'Failed to delete report';
+      toast.error(message);
+      console.error('Delete report failed:', error);
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+    }
+  };
+
   if (loading) {
-    return <LoadingSpinner />;
+    return (
+      <div className="p-12 flex justify-center">
+        <LoadingSpinner />
+      </div>
+    );
   }
 
   if (!report) {
-    return <div>Report not found</div>;
+    return (
+      <div className="mx-auto max-w-2xl rounded-lg border border-red-100 bg-red-50 px-4 py-6 text-center text-sm text-red-700">
+        Report not found
+      </div>
+    );
   }
 
   const latestVersion = report.versions?.[report.versions.length - 1];
@@ -130,8 +160,8 @@ const ReportDetailPage = () => {
   return (
     <div className="max-w-4xl mx-auto h-full overflow-y-auto">
       {/* Compact Header */}
-      <div className="mb-4">
-        <div className="flex justify-between items-center mb-4">
+      <div className="mb-4 mt-2 mr-1 ml-1">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
           <button
             onClick={() => navigate('/reports')}
             className="inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
@@ -140,7 +170,7 @@ const ReportDetailPage = () => {
             Back to Reports
           </button>
           
-          <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap items-center gap-2">
             {canExport && report.finalized_at && (
               <button
                 onClick={() => toast.success('Export feature will be implemented')}
@@ -150,66 +180,74 @@ const ReportDetailPage = () => {
                 Export
               </button>
             )}
-            
-            {canEdit && !report.finalized_at && (
-              <>
-                {!editing ? (
-                  <button
-                    onClick={() => {
-                      if (!report.study_instance_uid) {
-                        toast.error('This report is missing a study identifier.');
-                        return;
-                      }
-                      const demoUrl = `/demo?studyUid=${encodeURIComponent(report.study_instance_uid)}`;
-                      navigate(demoUrl);
-                    }}
-                    className="inline-flex items-center px-3 py-1.5 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
-                  >
-                    <Edit className="h-4 w-4 mr-1.5" />
-                    Edit in Demo
-                  </button>
-                ) : (
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={handleGenerateAI}
-                      disabled={generating}
-                      className="inline-flex items-center px-3 py-1.5 border border-purple-200 text-sm font-medium rounded-lg text-purple-700 bg-purple-50 hover:bg-purple-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors"
-                    >
-                      {generating ? (
-                        <LoadingSpinner size="small" />
-                      ) : (
-                        <>
-                          <Sparkles className="h-4 w-4 mr-1.5" />
-                          Generate AI
-                        </>
-                      )}
-                    </button>
-                    <button
-                      onClick={handleSave}
-                      className="inline-flex items-center px-3 py-1.5 border border-green-200 text-sm font-medium rounded-lg text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
-                    >
-                      <Save className="h-4 w-4 mr-1.5" />
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditing(false)}
-                      className="inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
-                    >
-                      Cancel
-                    </button>
-                  </div>
-                )}
-                
-                {canFinalize && !editing && !report.finalized_at && latestVersion && (
-                  <button
-                    onClick={() => setShowConfirmDialog(true)}
-                    className="inline-flex items-center px-3 py-1.5 border border-green-200 text-sm font-medium rounded-lg text-green-700 bg-green-50 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 transition-colors"
-                  >
-                    <CheckCircle className="h-4 w-4 mr-1.5" />
-                    Finalize
-                  </button>
-                )}
-              </>
+
+            {canEdit && !report.finalized_at && !editing && (
+              <button
+                onClick={() => {
+                  if (!report.study_instance_uid) {
+                    toast.error('This report is missing a study identifier.');
+                    return;
+                  }
+                  const demoUrl = `/demo?studyUid=${encodeURIComponent(report.study_instance_uid)}`;
+                  navigate(demoUrl);
+                }}
+                className="inline-flex items-center px-3 py-1.5 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+              >
+                <Edit className="h-4 w-4 mr-1.5" />
+                Edit in Demo
+              </button>
+            )}
+
+            {canEdit && !report.finalized_at && editing && (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  onClick={handleGenerateAI}
+                  disabled={generating}
+                  className="inline-flex items-center px-3 py-1.5 border border-purple-200 text-sm font-medium rounded-lg text-purple-700 bg-purple-50 hover:bg-purple-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors"
+                >
+                  {generating ? (
+                    <LoadingSpinner size="small" />
+                  ) : (
+                    <>
+                      <Sparkles className="h-4 w-4 mr-1.5" />
+                      Generate AI
+                    </>
+                  )}
+                </button>
+                <button
+                  onClick={handleSave}
+                  className="inline-flex items-center px-3 py-1.5 border border-emerald-200 text-sm font-medium rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
+                >
+                  <Save className="h-4 w-4 mr-1.5" />
+                  Save
+                </button>
+                <button
+                  onClick={() => setEditing(false)}
+                  className="inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+
+            {canFinalize && !editing && !report.finalized_at && latestVersion && (
+              <button
+                onClick={() => setShowConfirmDialog(true)}
+                className="inline-flex items-center px-3 py-1.5 border border-emerald-200 text-sm font-medium rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
+              >
+                <CheckCircle className="h-4 w-4 mr-1.5" />
+                Finalize
+              </button>
+            )}
+
+            {canDelete && !report.finalized_at && (
+              <button
+                onClick={() => setDeleteDialogOpen(true)}
+                className="inline-flex items-center px-3 py-1.5 border border-rose-200 text-sm font-medium rounded-lg text-rose-600 bg-rose-50 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-400 transition-colors"
+              >
+                <Trash2 className="h-4 w-4 mr-1.5" />
+                Delete report
+              </button>
             )}
           </div>
         </div>
@@ -417,7 +455,58 @@ const ReportDetailPage = () => {
         )}
       </div>
 
-      {/* Confirmation Dialog */}
+      {/* Delete Confirmation Dialog */}
+      {deleteDialogOpen && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 px-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full overflow-hidden">
+            <div className="px-6 py-4 border-b border-gray-200">
+              <h3 className="text-base font-semibold text-gray-900">
+                Delete report
+              </h3>
+            </div>
+            <div className="px-6 py-5 space-y-3 text-sm text-gray-600">
+              <p>
+                Permanently remove this draft from ChickadeeX? Linked Demo studies will be detached.
+              </p>
+              <div className="bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 text-xs text-rose-600">
+                This action cannot be undone.
+              </div>
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-gray-200 px-6 py-4">
+              <button
+                onClick={() => {
+                  if (!deleting) {
+                    setDeleteDialogOpen(false);
+                  }
+                }}
+                disabled={deleting}
+                className="px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="inline-flex items-center px-4 py-1.5 border border-rose-200 text-sm font-medium rounded-lg text-white bg-rose-600 hover:bg-rose-700 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-colors disabled:opacity-60"
+              >
+                {deleting ? (
+                  <>
+                    <LoadingSpinner size="small" />
+                    <span className="ml-2">Deleting…</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4 mr-1.5" />
+                    Delete report
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Finalize Confirmation Dialog */}
       {showConfirmDialog && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white rounded-lg p-6 max-w-md mx-4 shadow-xl">
