@@ -124,7 +124,7 @@ const Sidebar = ({ isCollapsed, onToggleCollapse, isMobileOpen: controlledMobile
 
       <aside className={`hidden md:flex ${isCollapsed ? 'md:w-20' : 'md:w-60'} md:fixed md:top-16 md:bottom-0 md:h-[calc(100vh-4rem)] md:flex-col transition-all duration-300`}>
         <div className={`flex min-h-0 flex-1 flex-col bg-gradient-to-b ${sidebarGradient} text-slate-700 shadow`}>
-          <div className="flex items-center justify-end px-4 py-4">
+          <div className={`flex items-center px-4 py-4 ${isCollapsed ? 'justify-center' : 'justify-end'}`}>
             <button
               type="button"
               onClick={() => onToggleCollapse?.()}

@@ -20,7 +20,9 @@
       "Bash(docker-compose build:*)",
       "Bash(node:*)",
       "Bash(cat:*)",
-      "Bash(git checkout:*)"
+      "Bash(git checkout:*)",
+      "Bash(timeout 10 npm start:*)",
+      "Bash(npm test:*)"
     ],
     "deny": [],
     "ask": []

@@ -221,8 +221,13 @@ router.get('/',
                 // Researchers continue to see finalized reports only
                 conditions.push('r.finalized_at IS NOT NULL');
             } else if (req.user.role === 'observer') {
+                // Observers see reports based on studies they have uploaded
                 paramCount++;
-                conditions.push(`r.doctor_id = $${paramCount}`);
+                conditions.push(`r.study_instance_uid IN (
+                    SELECT DISTINCT study_instance_uid
+                    FROM uploads
+                    WHERE user_id = $${paramCount} AND status = 'ready'
+                )`);
                 values.push(req.user.id);
             }
 
@@ -430,7 +435,7 @@ router.get('/summary',
 
             if (['admin', 'doctor'].includes(role)) {
                 const summaryRes = await db.query(`
-                    SELECT 
+                    SELECT
                         COUNT(*)::int AS total_reports,
                         COUNT(*) FILTER (WHERE finalized_at IS NULL)::int AS draft_reports,
                         COUNT(*) FILTER (WHERE finalized_at IS NOT NULL)::int AS finalized_reports
@@ -444,8 +449,31 @@ router.get('/summary',
                 });
             }
 
+            if (role === 'observer') {
+                // Observers see reports based on studies they have uploaded
+                const summaryRes = await db.query(`
+                    SELECT
+                        COUNT(*)::int AS total_reports,
+                        COUNT(*) FILTER (WHERE finalized_at IS NULL)::int AS draft_reports,
+                        COUNT(*) FILTER (WHERE finalized_at IS NOT NULL)::int AS finalized_reports
+                    FROM reports r
+                    WHERE r.study_instance_uid IN (
+                        SELECT DISTINCT study_instance_uid
+                        FROM uploads
+                        WHERE user_id = $1 AND status = 'ready'
+                    )
+                `, [req.user.id]);
+                const row = summaryRes.rows[0] || {};
+                return res.json({
+                    total_reports: normalize(row.total_reports),
+                    draft_reports: normalize(row.draft_reports),
+                    finalized_reports: normalize(row.finalized_reports)
+                });
+            }
+
+            // For researchers - only finalized reports
             const finalizedRes = await db.query(`
-                SELECT 
+                SELECT
                     COUNT(*)::int AS finalized_reports
                 FROM reports
                 WHERE finalized_at IS NOT NULL
@@ -641,7 +669,6 @@ router.post('/:reportId/generate-preview',
     async (req, res) => {
         try {
             const { reportId } = req.params;
-            const { template_used } = req.body;
             const db = getDB();
             
             // Check if any LLM models are available and enabled
