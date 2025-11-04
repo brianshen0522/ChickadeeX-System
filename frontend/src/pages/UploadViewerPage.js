@@ -1117,30 +1117,40 @@ const UploadViewerPage = () => {
 
   return (
     <div className="flex h-full flex-col overflow-hidden px-5 py-2">
-      <div className="flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-medical">
+      <div className="flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical">
         {hasSavedDraft && selectedUpload ? (
-          <div className="space-y-4">
-            {/* Row 1: Study Title + Primary Actions */}
-            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex-1 min-w-0">
-                <label htmlFor="study-title" className="sr-only">Study Title</label>
-                <input
-                  id="study-title"
-                  value={studyTitle}
-                  onChange={(event) => handleStudyTitleChange(event.target.value)}
-                  placeholder="Study name"
-                  maxLength={80}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
+          <div className="space-y-3">
+            {/* Row 1: Study Title + Unsaved Indicator + Primary Actions */}
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex-1 min-w-0 flex items-center gap-3">
+                <div className="flex-1 min-w-0">
+                  <label htmlFor="study-title" className="sr-only">Study Title</label>
+                  <input
+                    id="study-title"
+                    value={studyTitle}
+                    onChange={(event) => handleStudyTitleChange(event.target.value)}
+                    placeholder="Study name"
+                    maxLength={80}
+                    className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  />
+                </div>
+                {metadataDirty && (
+                  <div className="flex-shrink-0">
+                    <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                      Unsaved changes
+                    </span>
+                  </div>
+                )}
               </div>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
                 <button
                   type="button"
                   onClick={handleSaveMetadata}
                   disabled={!metadataSaveEnabled || isMetadataSaving}
                   aria-label="Save report metadata"
-                  className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {isMetadataSaving ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -1153,7 +1163,7 @@ const UploadViewerPage = () => {
             </div>
 
             {/* Row 2: Description Only */}
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col">
               <div className="flex-1 min-w-0">
                 <label htmlFor="study-description" className="sr-only">Study Description</label>
                 <textarea
@@ -1163,22 +1173,16 @@ const UploadViewerPage = () => {
                   placeholder="Add a short description for this study (optional)"
                   rows={2}
                   maxLength={220}
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
                 />
-                {studySummary && (
-                  <p className="mt-1 text-xs text-slate-500">
-                    {studySummary.length}/220 characters
-                  </p>
-                )}
-              </div>
-              {metadataDirty && (
-                <div className="flex justify-start">
-                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                    Unsaved changes
-                  </span>
+                <div className="mt-1 h-4 flex justify-end">
+                  {studySummary && (
+                    <p className="text-xs text-slate-500">
+                      {studySummary.length}/220 characters
+                    </p>
+                  )}
                 </div>
-              )}
+              </div>
             </div>
           </div>
         ) : (
