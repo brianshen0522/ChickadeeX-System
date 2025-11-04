@@ -26,7 +26,8 @@ const authenticateToken = async (req, res, next) => {
 
         // Verify JWT token
         const decoded = jwt.verify(token, process.env.JWT_SECRET);
-        
+        req.authToken = token;
+
         // Get user from database
         const db = getDB();
         const userQuery = `

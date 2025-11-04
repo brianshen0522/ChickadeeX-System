@@ -8,8 +8,33 @@ const { createAuditLog } = require('../utils/audit');
 const { callLLM } = require('../services/llm');
 
 const LLM_TEST_PLACEHOLDER_IMAGE = {
-    base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAusB9AlvK+sAAAAASUVORK5CYII=',
+    base64: 'iVBORw0KGgoAAAANSUhEUgAAAIAAAACACAIAAABMXPacAAAFTklEQVR4nO3QZzcQDAAF4FtaGqiUSinakxYqmjS0NTWshgbSljS1rDS1d2nSQtsu7dAW2ntrr3Pec94/cb/c5yc8wP+KFClStGhRAwODYsWKFS9evESJEiVLlixVqpShoWHp0qXLlClTtmzZcuXKGRkZGRsbm5iYlC9fvkKFChUrVjQ1Na1UqVLlypXNzMyqVKlStWrVatWqmZubV69evUaNGhYWFjVr1qxVq5alpaWVlVXt2rXr1KlTt27devXq1a9fv0GDBg0bNmzUqFHjxo2bNGnStGnTZs2aWVtb29jYNG/evEWLFi1btmzVqlXr1q1tbW3t7Ozs7e3btGnTtm3bdu3aOTg4ODo6tm/fvkOHDh07duzUqVPnzp27dOni5OTk7OzctWvXbt26de/evUePHi4uLj179uzVq1fv3r379OnTt2/ffv369e/f39XVdcCAAQMHDhw0aNDgwYOHDBkydOhQNze3YcOGDR8+fMSIESNHjnR3d/fw8PD09PTy8vL29h41atTo0aPHjBkzduxYHx+fcePGjR8/fsKECRMnTvT19fXz8/P39580aVJAQMDkyZOnTJkyderUadOmTZ8+fcaMGTNnzgwMDJw1a1ZQUNDs2bODg4PnzJkzd+5c7TP3582bp33m/vz586F94v6CBQugfeL+woULoX3ifkhICLRP3F+0aBG0T9xfvHgxtE/cX7JkCbRP3F+6dCm0T9xftmwZtE/cDw0NhfaJ+2FhYdA+cT88PBzaJ+5HRERA+8T9yMhIaJ+4v3z5cmifuB8VFQXtE/dXrFgB7RP3V65cCe0T91etWgXtE/dXr14N7RP316xZA+0T99euXQvtE/ejo6OhfeL+unXroH3i/vr166F94v6GDRugfeL+xo0boX3i/qZNm6B94v7mzZuhfeL+li1boH3i/tatW6F94v62bdugfeL+9u3boX3i/o4dO6B94v7OnTuhfeL+rl27oH3i/u7du6F94v6ePXugfeJ+TEwMtE/c37t3L7RP3N+3bx+0T9zfv38/tE/cP3DgALRP3D948CC0T9w/dOgQtE/cj42NhfaJ+3FxcdA+cf/w4cPQPnH/yJEj0D5x/+jRo9A+cf/YsWPQPnH/+PHj0D5xPz4+Hton7ickJED7xP3ExERon7h/4sQJaJ+4f/LkSWifuH/q1Clon7h/+vRpaJ+4f+bMGWifuH/27Flon7h/7tw5aJ+4n5SUBO0T95OTk6F94n5KSgq0T9xPTU2F9on7aWlp0D5xPz09Hdon7mdkZED7xP3z589D+8T9CxcuQPvE/czMTGifuH/x4kVon7h/6dIlaJ+4f/nyZWifuH/lyhVon7h/9epVaJ+4f+3aNWifuH/9+nVon7h/48YNaJ+4n5WVBe0T97Ozs6F94n5OTg60T9y/efMmtE/cv3XrFrRP3L99+za0T9y/c+cOtE/cv3v3LrRP3L937x60T9y/f/8+tE/cz83NhfaJ+w8ePID2ift5eXnQPnE/Pz8f2ifuFxQUQPvE/YcPH0L7xP1Hjx5B+8T9x48fQ/vE/SdPnkD7xP2nT59C+8T9Z8+eQfvE/efPn0P7xP0XL15A+8T9ly9fQvvE/VevXkH7xP3Xr19D+8T9N2/eQPvE/bdv30L7xP13795B+8T99+/fQ/vE/Q8fPkD7xP2PHz9C+8T9T58+QfvE/c+fP0P7xP3CwkJon7j/5csXaJ+4//XrV2ifuP/t2zdon7j//ft3aJ+4/+PHD2ifuP/z509on7j/69cvaJ+4//v3b2ifuP/nzx9on7j/9+9faJ+4/+/fv/8AX9WFhvb2dsEAAAAASUVORK5CYII=',
     mimeType: 'image/png'
+};
+
+const extractLLMTestError = (error) => {
+    if (!error) return 'LLM test failed';
+
+    if (error.response) {
+        if (typeof error.response.data === 'string') {
+            return error.response.data;
+        }
+        if (error.response.data?.error) {
+            return error.response.data.error;
+        }
+        if (error.response.data?.message) {
+            return error.response.data.message;
+        }
+        if (error.response.statusText) {
+            return `${error.response.status} ${error.response.statusText}`;
+        }
+    }
+
+    if (error.message) {
+        return error.message;
+    }
+
+    return 'LLM test failed';
 };
 
 const router = express.Router();
@@ -416,7 +441,12 @@ router.post('/llm-configs',
                         studyDescription: 'Health check',
                         modality: 'GEN', 
                         clinicalContext: 'Ping',
-                        previousContent: ''
+                        previousContent: '',
+                        dicom: {
+                            imageBase64: LLM_TEST_PLACEHOLDER_IMAGE.base64,
+                            imageMimeType: LLM_TEST_PLACEHOLDER_IMAGE.mimeType,
+                            studyInstanceUID: 'LLM-CONFIG-AUTOTEST'
+                        }
                     });
                     const latency = Date.now() - start;
                     testResult = { healthy: true, latency_ms: latency };
@@ -864,8 +894,13 @@ router.post('/llm-configs/:configId/test',
 
             res.json({ healthy: true, latency_ms: latency, model_name: cfg.model_name });
         } catch (error) {
-            logger.error('LLM config test failed:', error?.response?.data || error.message || error);
-            res.status(500).json({ healthy: false, error: 'LLM test failed' });
+            const message = extractLLMTestError(error);
+            logger.error('LLM config test failed:', {
+                configId,
+                error: message,
+                details: error?.response?.data || error.message || error
+            });
+            res.status(200).json({ healthy: false, error: message });
         }
     }
 );

@@ -49,7 +49,11 @@ APP_REALM="${KEYCLOAK_REALM:-medical-reports}"
 CLIENT_ID="${KEYCLOAK_CLIENT_ID:-medical-reports-client}"
 FRONTEND_URL="${FRONTEND_URL:-http://localhost:3001}"
 BACKEND_URL="${BACKEND_URL:-http://localhost:3000}"
-CLIENT_SECRET="${KEYCLOAK_CLIENT_SECRET:-dev-secret}"
+
+# Derive normalized redirect URIs and origins
+LOGIN_REDIRECT_URI="${BACKEND_URL}/api/auth/sso/redirect"
+FRONTEND_ORIGIN="${FRONTEND_URL%/}"
+BACKEND_ORIGIN="${BACKEND_URL%/}"
 
 echo "[keycloak-config] Ensuring client '$CLIENT_ID' exists in realm '$APP_REALM'..."
 
@@ -70,26 +74,19 @@ if /opt/keycloak/bin/kcadm.sh get realms/"$APP_REALM" >/dev/null 2>&1; then
   /opt/keycloak/bin/kcadm.sh update clients/"$CLIENT_INTERNAL_ID" -r "$APP_REALM" \
     -s enabled=true \
     -s protocol=openid-connect \
-    -s publicClient=false \
-    -s clientAuthenticatorType=client-secret \
+    -s publicClient=true \
     -s standardFlowEnabled=true \
     -s implicitFlowEnabled=false \
     -s directAccessGrantsEnabled=false \
     -s serviceAccountsEnabled=false \
-    -s "redirectUris=[\"$BACKEND_URL/api/auth/sso/redirect\"]" \
-    -s "webOrigins=[\"$FRONTEND_URL\"]" \
-    -s rootUrl="$FRONTEND_URL" \
+    -s "redirectUris=[\"$LOGIN_REDIRECT_URI\",\"$FRONTEND_ORIGIN/*\"]" \
+    -s "webOrigins=[\"$FRONTEND_ORIGIN\",\"$BACKEND_ORIGIN\"]" \
+    -s rootUrl="$FRONTEND_ORIGIN" \
     -s baseUrl="/" >/dev/null || echo "[keycloak-config] Warning: failed to update client core settings."
 
   # Update attributes (post logout redirect)
   /opt/keycloak/bin/kcadm.sh update clients/"$CLIENT_INTERNAL_ID" -r "$APP_REALM" \
-    -s "attributes.post.logout.redirect.uris=$FRONTEND_URL/login" >/dev/null || true
-
-  # Set/rotate the client secret
-  /opt/keycloak/bin/kcadm.sh update clients/"$CLIENT_INTERNAL_ID"/client-secret -r "$APP_REALM" \
-    -s value="$CLIENT_SECRET" >/dev/null && \
-    echo "[keycloak-config] Client secret set for '$CLIENT_ID'." || \
-    echo "[keycloak-config] Warning: failed to set client secret."
+    -s "attributes.post.logout.redirect.uris=$FRONTEND_ORIGIN/login" >/dev/null || true
 else
   echo "[keycloak-config] Realm '$APP_REALM' not found; skipping client configuration."
 fi

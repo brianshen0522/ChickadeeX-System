@@ -18,6 +18,18 @@ export const AuthProvider = ({ children }) => {
 
   // Check for existing session on mount
   useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const { search } = window.location;
+      if (search) {
+        const params = new URLSearchParams(search);
+        const sessionToken = params.get('session_token');
+        if (sessionToken) {
+          authService.storeAuthToken(sessionToken);
+        }
+      }
+    }
+
+    authService.bootstrapAuthToken();
     checkAuthStatus();
   }, []);
 
@@ -29,6 +41,9 @@ export const AuthProvider = ({ children }) => {
       setIsAuthenticated(true);
     } catch (error) {
       console.error('Auth check failed:', error);
+      if (error?.response?.status === 401) {
+        authService.clearAuthToken();
+      }
       // No need to clear localStorage, cookies are handled by server
     } finally {
       setIsLoading(false);
@@ -38,7 +53,13 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       const response = await authService.login(credentials);
-      const { user: userData } = response;
+      const { user: userData, token } = response;
+
+      if (token) {
+        authService.storeAuthToken(token);
+      } else {
+        authService.clearAuthToken();
+      }
       
       // Cookie is set by server automatically
       setUser(userData);
@@ -54,7 +75,13 @@ export const AuthProvider = ({ children }) => {
   const loginWithSSO = async (accessToken) => {
     try {
       const response = await authService.ssoCallback(accessToken);
-      const { user: userData } = response;
+      const { user: userData, token } = response;
+
+      if (token) {
+        authService.storeAuthToken(token);
+      } else {
+        authService.clearAuthToken();
+      }
       
       // Cookie is set by server automatically
       setUser(userData);
@@ -87,6 +114,7 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
+      authService.clearAuthToken();
       // Cookie is cleared by server
       setUser(null);
       setIsAuthenticated(false);
@@ -96,7 +124,13 @@ export const AuthProvider = ({ children }) => {
   const refreshToken = async () => {
     try {
       const response = await authService.refreshToken();
-      const { user: userData } = response;
+      const { user: userData, token } = response;
+
+      if (token) {
+        authService.storeAuthToken(token);
+      } else {
+        authService.clearAuthToken();
+      }
       
       // Cookie is refreshed by server automatically
       setUser(userData);

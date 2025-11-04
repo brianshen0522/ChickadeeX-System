@@ -8,6 +8,7 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import companyLogo from '../assets/logo.svg';
+import * as authService from '../services/authService';
 
 const LoginPage = () => {
   const { login, completeSSOLogin } = useAuth();
@@ -34,10 +35,14 @@ const LoginPage = () => {
   };
 
   const handleKeycloakLogin = () => {
-    const keycloakUrl = process.env.REACT_APP_KEYCLOAK_URL || 'http://localhost:8080';
+    const publicProtocol = (process.env.REACT_APP_PUBLIC_PROTOCOL || window.location.protocol.replace(':', '')).replace(/:$/, '');
+    const publicHost = process.env.REACT_APP_PUBLIC_HOSTNAME || window.location.hostname;
+    const keycloakPort = process.env.REACT_APP_KEYCLOAK_PORT || '8080';
+
+    const keycloakUrl = process.env.REACT_APP_KEYCLOAK_URL || `${publicProtocol}://${publicHost}:${keycloakPort}`;
     const realm = process.env.REACT_APP_KEYCLOAK_REALM || 'medical-reports';
     const clientId = process.env.REACT_APP_KEYCLOAK_CLIENT_ID || 'medical-reports-client';
-    const apiBase = process.env.REACT_APP_API_URL || 'http://localhost:3000';
+    const apiBase = process.env.REACT_APP_API_URL || `${publicProtocol}://${publicHost}:3000`;
     const redirectUri = encodeURIComponent(`${apiBase}/api/auth/sso/redirect`);
 
     if (!keycloakUrl || !realm || !clientId) {
@@ -62,6 +67,19 @@ const LoginPage = () => {
     const params = new URLSearchParams(location.search);
     const ssoSuccess = params.get('sso_success');
     const error = params.get('error');
+    const sessionToken = params.get('session_token');
+    const expiresIn = params.get('expires_in');
+
+    if (sessionToken) {
+      authService.storeAuthToken(sessionToken);
+      const cleanParams = new URLSearchParams(params);
+      cleanParams.delete('session_token');
+      if (expiresIn) {
+        cleanParams.delete('expires_in');
+      }
+      const newSearch = cleanParams.toString();
+      window.history.replaceState({}, '', `${location.pathname}${newSearch ? `?${newSearch}` : ''}`);
+    }
 
     if (error) {
       toast.error('SSO login failed');
@@ -73,7 +91,7 @@ const LoginPage = () => {
         try {
           await completeSSOLogin();
           toast.success('Login successful!');
-        navigate('/', { replace: true });
+          navigate('/', { replace: true });
         } catch (e) {
           toast.error('SSO login failed');
         } finally {

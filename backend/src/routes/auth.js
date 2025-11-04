@@ -13,6 +13,49 @@ const { createAuditLog } = require('../utils/audit');
 
 const router = express.Router();
 
+const parseBoolean = (value, defaultValue = false) => {
+    if (value === undefined || value === null || value === '') {
+        return defaultValue;
+    }
+    const normalized = String(value).trim().toLowerCase();
+    return ['true', '1', 'yes', 'on'].includes(normalized);
+};
+
+const resolveAuthCookieOptions = () => {
+    const protocol = (process.env.PUBLIC_PROTOCOL || '').toLowerCase();
+    const defaultSecure = protocol === 'https';
+    let secure = parseBoolean(process.env.AUTH_COOKIE_SECURE, defaultSecure);
+
+    let sameSite = (process.env.AUTH_COOKIE_SAMESITE || 'lax').toLowerCase();
+    const validSameSites = ['lax', 'strict', 'none'];
+    if (!validSameSites.includes(sameSite)) {
+        logger.warn(`Invalid AUTH_COOKIE_SAMESITE value "${process.env.AUTH_COOKIE_SAMESITE}"; defaulting to "lax".`);
+        sameSite = 'lax';
+    }
+    if (sameSite === 'none' && !secure) {
+        secure = true;
+        logger.warn('AUTH_COOKIE_SAMESITE set to "none" but AUTH_COOKIE_SECURE disabled. Forcing secure cookies to satisfy browser requirements.');
+    }
+
+    const domain = process.env.AUTH_COOKIE_DOMAIN || undefined;
+    const maxAgeSource = process.env.AUTH_COOKIE_MAX_AGE;
+    const maxAgeParsed = Number(maxAgeSource);
+    const maxAge = Number.isFinite(maxAgeParsed) && maxAgeParsed > 0 ? maxAgeParsed : 30 * 60 * 1000; // 30 minutes
+
+    return {
+        httpOnly: true,
+        secure,
+        sameSite,
+        domain,
+        path: '/',
+        maxAge
+    };
+};
+
+const baseAuthCookieOptions = resolveAuthCookieOptions();
+const getAuthCookieOptions = () => ({ ...baseAuthCookieOptions });
+const getClearAuthCookieOptions = () => ({ ...baseAuthCookieOptions, expires: new Date(0), maxAge: 0 });
+
 // Local login
 router.post('/login', validateRequest(schemas.login), async (req, res) => {
     try {
@@ -104,14 +147,12 @@ router.post('/login', validateRequest(schemas.login), async (req, res) => {
         });
 
         // Set httpOnly cookie for security
-        res.cookie('auth_token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 30 * 60 * 1000 // 30 minutes
-        });
+        const cookieOptions = getAuthCookieOptions();
+        res.cookie('auth_token', token, cookieOptions);
 
         res.json({
+            token,
+            expires_in: cookieOptions.maxAge,
             user: {
                 id: user.id,
                 email: user.email,
@@ -135,7 +176,11 @@ router.post('/sso/callback', async (req, res) => {
         }
 
         // Verify token with Keycloak
-        const keycloakUrl = process.env.KEYCLOAK_URL;
+        const keycloakUrl = process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_URL;
+        if (!keycloakUrl) {
+            logger.error('SSO callback missing Keycloak URL configuration');
+            return res.status(500).json({ error: 'SSO misconfigured' });
+        }
         const realm = process.env.KEYCLOAK_REALM;
         
         const userInfoResponse = await axios.get(
@@ -280,14 +325,12 @@ router.post('/sso/callback', async (req, res) => {
         });
 
         // Set httpOnly cookie for security
-        res.cookie('auth_token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 30 * 60 * 1000 // 30 minutes
-        });
+        const cookieOptions = getAuthCookieOptions();
+        res.cookie('auth_token', token, cookieOptions);
 
         res.json({
+            token,
+            expires_in: cookieOptions.maxAge,
             user: {
                 id: user.id,
                 email: user.email,
@@ -312,7 +355,11 @@ router.get('/sso/redirect', async (req, res) => {
             return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=missing_code`);
         }
 
-        const keycloakUrl = process.env.KEYCLOAK_URL;
+        const keycloakUrl = process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_URL;
+        if (!keycloakUrl) {
+            logger.error('SSO redirect missing Keycloak URL configuration');
+            return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=sso_config`);
+        }
         const realm = process.env.KEYCLOAK_REALM;
         const clientId = process.env.KEYCLOAK_CLIENT_ID;
         const clientSecret = process.env.KEYCLOAK_CLIENT_SECRET; // Optional
@@ -480,17 +527,17 @@ router.get('/sso/redirect', async (req, res) => {
             user_agent: req.get('User-Agent')
         });
 
-        // Set httpOnly cookie for security
-        res.cookie('auth_token', token, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 30 * 60 * 1000 // 30 minutes
-        });
-
         const appUrl = process.env.CORS_ORIGIN || 'http://localhost:3001';
-        // Redirect back to frontend - token is now in cookie
-        return res.redirect(`${appUrl}/login?sso_success=true`);
+        const cookieOptions = getAuthCookieOptions();
+        res.cookie('auth_token', token, cookieOptions);
+
+        // Redirect back to frontend - include lightweight session token for SPA authorization header fallback
+        const redirectUrl = new URL(`${appUrl}/login`);
+        redirectUrl.searchParams.set('sso_success', 'true');
+        redirectUrl.searchParams.set('session_token', token);
+        redirectUrl.searchParams.set('expires_in', String(cookieOptions.maxAge || (30 * 60 * 1000)));
+
+        return res.redirect(302, redirectUrl.toString());
     } catch (error) {
         logger.error('SSO redirect error:', error?.response?.data || error.message || error);
         const appUrl = process.env.CORS_ORIGIN || 'http://localhost:3001';
@@ -501,15 +548,17 @@ router.get('/sso/redirect', async (req, res) => {
 // Logout
 router.post('/logout', authenticateToken, async (req, res) => {
     try {
-        const token = req.headers['authorization']?.split(' ')[1];
+        const token = req.authToken;
         const redis = getRedis();
         const db = getDB();
 
-        // Add token to blacklist
-        await redis.setEx(`blacklist:${token}`, 1800, 'revoked'); // 30 minutes
+        if (token) {
+            // Add token to blacklist
+            await redis.setEx(`blacklist:${token}`, 1800, 'revoked'); // 30 minutes
 
-        // Delete session from database
-        await db.query('DELETE FROM sessions WHERE token = $1', [token]);
+            // Delete session from database
+            await db.query('DELETE FROM sessions WHERE token = $1', [token]);
+        }
 
         await createAuditLog(req.user.id, 'logout', 'user', req.user.id, {
             ip: req.ip,
@@ -517,7 +566,7 @@ router.post('/logout', authenticateToken, async (req, res) => {
         });
 
         // Clear the auth cookie
-        res.clearCookie('auth_token');
+        res.clearCookie('auth_token', getClearAuthCookieOptions());
 
         res.json({ message: 'Logged out successfully' });
     } catch (error) {
@@ -539,32 +588,33 @@ router.post('/refresh', authenticateToken, async (req, res) => {
         );
 
         // Update session
-        const oldToken = req.headers['authorization']?.split(' ')[1];
+        const oldToken = req.authToken;
         const db = getDB();
-        
-        await db.query(`
-            UPDATE sessions 
-            SET token = $1, expires_at = $2 
-            WHERE token = $3
-        `, [
-            newToken,
-            new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
-            oldToken
-        ]);
+        if (oldToken) {
+            await db.query(`
+                UPDATE sessions 
+                SET token = $1, expires_at = $2 
+                WHERE token = $3
+            `, [
+                newToken,
+                new Date(Date.now() + 30 * 60 * 1000), // 30 minutes
+                oldToken
+            ]);
 
-        // Blacklist old token
-        const redis = getRedis();
-        await redis.setEx(`blacklist:${oldToken}`, 1800, 'revoked');
+            // Blacklist old token
+            const redis = getRedis();
+            await redis.setEx(`blacklist:${oldToken}`, 1800, 'revoked');
+        } else {
+            logger.warn('Token refresh requested without prior auth token context');
+        }
 
         // Set new httpOnly cookie
-        res.cookie('auth_token', newToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
-            maxAge: 30 * 60 * 1000 // 30 minutes
-        });
+        const cookieOptions = getAuthCookieOptions();
+        res.cookie('auth_token', newToken, cookieOptions);
 
         res.json({
+            token: newToken,
+            expires_in: cookieOptions.maxAge,
             user: {
                 id: user.id,
                 email: user.email,
