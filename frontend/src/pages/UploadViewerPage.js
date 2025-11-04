@@ -819,10 +819,9 @@ const UploadViewerPage = () => {
         aria-label="Manage studies"
         aria-haspopup="menu"
         aria-expanded={isUploadMenuOpen}
-        className="group relative inline-flex min-w-[130px] items-center justify-center gap-2 overflow-hidden rounded-full bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-4 py-2 text-sm font-semibold text-white shadow-[0_18px_35px_-18px_rgba(37,99,235,0.9)] transition-transform duration-200 hover:-translate-y-0.5 hover:shadow-[0_24px_45px_-18px_rgba(37,99,235,0.95)] focus:outline-none focus:ring-2 focus:ring-blue-400 focus:ring-offset-2"
+        className="group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_25px_-8px_rgba(37,99,235,0.4)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_35px_-8px_rgba(37,99,235,0.5)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:ring-offset-2"
       >
-        <span className="pointer-events-none absolute inset-0 bg-blue-500/30 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-        <span className="pointer-events-none absolute inset-0 scale-[1.4] bg-blue-400/20 blur-[30px] opacity-0 transition group-hover:opacity-90" />
+        <span className="pointer-events-none absolute inset-0 bg-blue-500/20 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
         <FolderOpen className="relative h-4 w-4" />
         <span className="relative">Manage Studies</span>
       </button>
@@ -832,7 +831,7 @@ const UploadViewerPage = () => {
             <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">Your Studies</span>
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md bg-blue-600 px-2.5 py-1.5 text-xs font-semibold text-white shadow-soft transition hover:bg-blue-500">
               <UploadCloud className="h-3.5 w-3.5" />
-              Add Study
+              Upload
               <input
                 type="file"
                 multiple
@@ -966,18 +965,18 @@ const UploadViewerPage = () => {
   const renderReportPanel = () => {
     return (
       <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
-        <div className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-4 py-2 md:flex-nowrap">
+        <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-2 sm:flex-row sm:items-center sm:gap-3">
           <div className="flex items-center gap-3 flex-shrink-0">
-            <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Version</span>
+            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Version</span>
             <select
               value={reportState.activeVersion != null ? String(reportState.activeVersion) : ''}
               onChange={handleVersionChange}
-              className="h-8 w-28 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-sm text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="h-8 w-36 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={!versionsSorted.length && !reportState.hasUnsavedChanges}
             >
               {(reportState.hasUnsavedChanges || !versionsSorted.length) && (
                 <option value="">
-                  {reportState.hasUnsavedChanges ? 'Current draft (unsaved)' : 'No versions yet'}
+                  {reportState.hasUnsavedChanges ? 'Draft (unsaved)' : 'No versions'}
                 </option>
               )}
               {versionsSorted.map((version) => {
@@ -991,12 +990,12 @@ const UploadViewerPage = () => {
             </select>
           </div>
 
-          <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+          <div className="flex items-center gap-2 sm:ml-auto">
             <button
               type="button"
               onClick={handleGenerate}
               disabled={!canGenerate || reportState.isGenerating}
-              className="inline-flex h-8 items-center gap-1 rounded-md bg-blue-600 px-3 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
+              className="inline-flex h-8 items-center gap-1 rounded-md bg-blue-600 px-2.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
               title={!canGenerate ? 'Upload a study with a viewable preview to generate a draft' : 'Generate AI draft'}
             >
               {reportState.isGenerating ? (
@@ -1010,7 +1009,7 @@ const UploadViewerPage = () => {
               type="button"
               onClick={handleSaveReport}
               disabled={!reportState.hasUnsavedChanges || reportState.isSaving}
-              className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-500 px-3 text-xs font-semibold text-blue-600 transition hover:bg-blue-50 disabled:opacity-60"
+              className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-500 px-2.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-50 disabled:opacity-60"
             >
               {reportState.isSaving ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1022,7 +1021,6 @@ const UploadViewerPage = () => {
             {showSavedIndicator && (
               <span className="inline-flex items-center gap-1 rounded-full bg-green-50 px-2 py-1 text-[0.65rem] font-semibold text-green-600">
                 <CheckCircle2 className="h-3 w-3" />
-                Draft saved
               </span>
             )}
           </div>
@@ -1118,70 +1116,87 @@ const UploadViewerPage = () => {
   };
 
   return (
-    <div className="flex h-full flex-col overflow-hidden px-5 py-3">
-      <div className="rounded-2xl border border-slate-200 bg-white px-4 py-3 shadow-medical">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="flex-1 min-w-[260px]">
-            {hasSavedDraft && selectedUpload ? (
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  {metadataDirty && (
-                    <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                      Unsaved details
-                    </span>
+    <div className="flex h-full flex-col overflow-hidden px-5 py-2">
+      <div className="flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-4 shadow-medical">
+        {hasSavedDraft && selectedUpload ? (
+          <div className="space-y-4">
+            {/* Row 1: Study Title + Primary Actions */}
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex-1 min-w-0">
+                <label htmlFor="study-title" className="sr-only">Study Title</label>
+                <input
+                  id="study-title"
+                  value={studyTitle}
+                  onChange={(event) => handleStudyTitleChange(event.target.value)}
+                  placeholder="Study name"
+                  maxLength={80}
+                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-3 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+              </div>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
+                <button
+                  type="button"
+                  onClick={handleSaveMetadata}
+                  disabled={!metadataSaveEnabled || isMetadataSaving}
+                  aria-label="Save report metadata"
+                  className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {isMetadataSaving ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Save className="h-4 w-4" />
                   )}
-                </div>
-                <div className="grid gap-2 md:grid-cols-2 md:gap-3">
-                  <input
-                    value={studyTitle}
-                    onChange={(event) => handleStudyTitleChange(event.target.value)}
-                    placeholder="Study name"
-                    maxLength={80}
-                    className="w-full rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300"
-                  />
-                  <textarea
-                    value={studySummary}
-                    onChange={(event) => handleStudySummaryChange(event.target.value)}
-                    placeholder="Add a short description for this study"
-                    rows={2}
-                    className="w-full min-h-[42px] resize-none rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-300 md:col-span-2"
-                    maxLength={220}
-                  />
-                </div>
+                  <span>Save Report</span>
+                </button>
               </div>
-            ) : (
-              <div className="max-w-2xl space-y-2 text-slate-700">
-                <h1 className="text-lg font-semibold text-slate-900">
-                  Preview a study with BlueLight and draft a clinical report.
-                </h1>
-                <p className="text-sm leading-relaxed">
-                  Upload a DICOM or medical image to open it in the viewer, then capture findings and impressions side by side. AI assistance helps you iterate quickly while keeping patient context in view.
-                </p>
+            </div>
+
+            {/* Row 2: Description Only */}
+            <div className="flex flex-col gap-4">
+              <div className="flex-1 min-w-0">
+                <label htmlFor="study-description" className="sr-only">Study Description</label>
+                <textarea
+                  id="study-description"
+                  value={studySummary}
+                  onChange={(event) => handleStudySummaryChange(event.target.value)}
+                  placeholder="Add a short description for this study (optional)"
+                  rows={2}
+                  maxLength={220}
+                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                />
+                {studySummary && (
+                  <p className="mt-1 text-xs text-slate-500">
+                    {studySummary.length}/220 characters
+                  </p>
+                )}
               </div>
-            )}
-          </div>
-          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
-            <div className="sm:flex-shrink-0">{renderUploadsDropdown()}</div>
-            <button
-              type="button"
-              onClick={handleSaveMetadata}
-              disabled={!metadataSaveEnabled || isMetadataSaving}
-              aria-label="Save report metadata"
-              className="inline-flex min-w-[140px] items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-1.5 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-blue-200 hover:text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-300 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {isMetadataSaving ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Save className="h-4 w-4" />
+              {metadataDirty && (
+                <div className="flex justify-start">
+                  <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                    Unsaved changes
+                  </span>
+                </div>
               )}
-              <span>Save Report</span>
-            </button>
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="text-center space-y-3">
+            <h1 className="text-xl font-semibold text-slate-900">
+              Preview studies with BlueLight and draft clinical reports
+            </h1>
+            <p className="text-sm leading-relaxed text-slate-600 max-w-2xl mx-auto">
+              Upload a DICOM or medical image to open it in the viewer, then capture findings and impressions side by side. AI assistance helps you iterate quickly while keeping patient context in view.
+            </p>
+            <div className="pt-2">
+              {renderUploadsDropdown()}
+            </div>
+          </div>
+        )}
       </div>
 
-      <div className="mt-2 grid flex-1 min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr),420px]">
+      <div className="mt-2 flex-1 grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr),420px]">
         <div className="h-full min-h-0">
           {renderViewer()}
         </div>
