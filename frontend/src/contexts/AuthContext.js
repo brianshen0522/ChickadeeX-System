@@ -18,17 +18,6 @@ export const AuthProvider = ({ children }) => {
 
   // Check for existing session on mount
   useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const { search } = window.location;
-      if (search) {
-        const params = new URLSearchParams(search);
-        const sessionToken = params.get('session_token');
-        if (sessionToken) {
-          authService.storeAuthToken(sessionToken);
-        }
-      }
-    }
-
     authService.bootstrapAuthToken();
     checkAuthStatus();
   }, []);
@@ -72,41 +61,7 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
-  const loginWithSSO = async (accessToken) => {
-    try {
-      const response = await authService.ssoCallback(accessToken);
-      const { user: userData, token } = response;
 
-      if (token) {
-        authService.storeAuthToken(token);
-      } else {
-        authService.clearAuthToken();
-      }
-      
-      // Cookie is set by server automatically
-      setUser(userData);
-      setIsAuthenticated(true);
-      
-      return response;
-    } catch (error) {
-      console.error('SSO login failed:', error);
-      throw error;
-    }
-  };
-
-  // Complete SSO when the backend already issued an internal token
-  const completeSSOLogin = async () => {
-    try {
-      // Just fetch current user - cookie should already be set by server
-      const userData = await authService.getCurrentUser();
-      setUser(userData.user);
-      setIsAuthenticated(true);
-      return { user: userData.user };
-    } catch (error) {
-      console.error('Complete SSO login failed:', error);
-      throw error;
-    }
-  };
 
   const logout = async () => {
     try {
@@ -161,8 +116,6 @@ export const AuthProvider = ({ children }) => {
     isAuthenticated,
     isLoading,
     login,
-    loginWithSSO,
-    completeSSOLogin,
     logout,
     refreshToken,
     checkAuthStatus

@@ -1,17 +1,15 @@
 import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Lock, Mail, KeyRound } from 'lucide-react';
-import { FaGoogle } from 'react-icons/fa';
+import { Lock, Mail } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 
 import { useAuth } from '../contexts/AuthContext';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import companyLogo from '../assets/logo.svg';
-import * as authService from '../services/authService';
 
 const LoginPage = () => {
-  const { login, completeSSOLogin } = useAuth();
+  const { login } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
@@ -27,6 +25,7 @@ const LoginPage = () => {
     try {
       await login(data);
       toast.success('Login successful!');
+      navigate('/', { replace: true });
     } catch (error) {
       toast.error(error.response?.data?.error || 'Login failed');
     } finally {
@@ -34,29 +33,6 @@ const LoginPage = () => {
     }
   };
 
-  const handleKeycloakLogin = () => {
-    const publicProtocol = (process.env.REACT_APP_PUBLIC_PROTOCOL || window.location.protocol.replace(':', '')).replace(/:$/, '');
-    const publicHost = process.env.REACT_APP_PUBLIC_HOSTNAME || window.location.hostname;
-
-    const keycloakUrl = process.env.REACT_APP_KEYCLOAK_URL || `${publicProtocol}://${publicHost}/kc`;
-    const realm = process.env.REACT_APP_KEYCLOAK_REALM || 'medical-reports';
-    const clientId = process.env.REACT_APP_KEYCLOAK_CLIENT_ID || 'medical-reports-client';
-    const apiBase = process.env.REACT_APP_API_URL || `${publicProtocol}://${publicHost}:3000`;
-    const redirectUri = encodeURIComponent(`${apiBase}/api/auth/sso/redirect`);
-
-    if (!keycloakUrl || !realm || !clientId) {
-      toast.error('SSO is not configured. Please set Keycloak env vars.');
-      return;
-    }
-
-    const scope = encodeURIComponent('openid email profile');
-    const authUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&prompt=select_account`;
-    window.location.href = authUrl;
-  };
-
-  const handleGoogleLogin = () => {
-    toast.info('Google login is not yet configured. This is for testing purposes.');
-  };
 
   const handleForgotPassword = () => {
     toast.info('Please contact your administrator to reset your password.');
@@ -64,41 +40,12 @@ const LoginPage = () => {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
-    const ssoSuccess = params.get('sso_success');
     const error = params.get('error');
-    const sessionToken = params.get('session_token');
-    const expiresIn = params.get('expires_in');
-
-    if (sessionToken) {
-      authService.storeAuthToken(sessionToken);
-      const cleanParams = new URLSearchParams(params);
-      cleanParams.delete('session_token');
-      if (expiresIn) {
-        cleanParams.delete('expires_in');
-      }
-      const newSearch = cleanParams.toString();
-      window.history.replaceState({}, '', `${location.pathname}${newSearch ? `?${newSearch}` : ''}`);
-    }
 
     if (error) {
-      toast.error('SSO login failed');
+      toast.error('Login failed');
     }
-
-    if (ssoSuccess) {
-      (async () => {
-        setIsLoading(true);
-        try {
-          await completeSSOLogin();
-          toast.success('Login successful!');
-          navigate('/', { replace: true });
-        } catch (e) {
-          toast.error('SSO login failed');
-        } finally {
-          setIsLoading(false);
-        }
-      })();
-    }
-  }, [location.search, completeSSOLogin, navigate]);
+  }, [location.search]);
 
   return (
     <div className="min-h-screen bg-neutral-100">
@@ -215,26 +162,14 @@ const LoginPage = () => {
               </button>
             </form>
 
-            <div className="mt-8">
-              <div className="text-center text-sm text-neutral-500">Or sign in using</div>
-              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-center sm:space-x-4 sm:gap-0">
-                <button
-                  type="button"
-                  onClick={handleKeycloakLogin}
-                  className="inline-flex items-center justify-center space-x-2 rounded-xl border border-primary-200 bg-primary-50 px-4 py-2 text-sm font-medium text-primary-700 shadow-sm transition hover:bg-primary-100 hover:border-primary-300 focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2"
-                >
-                  <KeyRound className="h-4 w-4" />
-                  <span>Keycloak</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleGoogleLogin}
-                  className="inline-flex items-center justify-center space-x-2 rounded-xl border border-neutral-200 bg-neutral-50 px-4 py-2 text-sm font-medium text-neutral-700 shadow-sm transition hover:bg-neutral-100 hover:border-neutral-300 focus:outline-none focus:ring-2 focus:ring-neutral-300 focus:ring-offset-2"
-                >
-                  <FaGoogle className="h-4 w-4 text-error-500" />
-                  <span>Google</span>
-                </button>
-              </div>
+            <div className="mt-8 text-center">
+              <button
+                type="button"
+                onClick={handleForgotPassword}
+                className="text-sm text-primary-600 hover:text-primary-500 transition"
+              >
+                Forgot your password?
+              </button>
             </div>
           </div>
         </section>

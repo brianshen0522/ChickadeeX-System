@@ -37,10 +37,6 @@ export const login = async (credentials) => {
   return response.data;
 };
 
-export const ssoCallback = async (accessToken) => {
-  const response = await api.post('/auth/sso/callback', { access_token: accessToken });
-  return response.data;
-};
 
 export const logout = async () => {
   const response = await api.post('/auth/logout');
