@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
-import { Lock, Mail } from 'lucide-react';
+import { Lock, User } from 'lucide-react';
 import toast from 'react-hot-toast';
 import { useNavigate, useLocation } from 'react-router-dom';
 
@@ -34,9 +34,6 @@ const LoginPage = () => {
   };
 
 
-  const handleForgotPassword = () => {
-    toast.info('Please contact your administrator to reset your password.');
-  };
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -75,35 +72,31 @@ const LoginPage = () => {
             <form className="space-y-6" onSubmit={handleSubmit(onSubmit)}>
               <div className="space-y-5">
                 <div>
-                  <label htmlFor="email" className="mb-2 block text-sm font-medium text-neutral-700">
-                    Email
+                  <label htmlFor="username" className="mb-2 block text-sm font-medium text-neutral-700">
+                    Username
                   </label>
                   <div className="relative">
-                    <Mail className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
+                    <User className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-neutral-400" />
                     <input
-                      id="email"
-                      type="email"
-                      autoComplete="email"
+                      id="username"
+                      type="text"
+                      autoComplete="username"
                       required
                       className={`w-full rounded-xl border bg-white px-11 py-3 text-sm shadow-sm outline-none transition focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
-                        errors.email
+                        errors.username
                           ? 'border-error-300 bg-error-50 focus:ring-error-500 focus:border-error-500'
                           : 'border-neutral-300 hover:border-primary-400'
                       }`}
-                      placeholder="Enter your email"
-                      {...register('email', {
-                        required: 'Email is required',
-                        pattern: {
-                          value: /^[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}$/i,
-                          message: 'Invalid email address'
-                        }
+                      placeholder="Enter your username"
+                      {...register('username', {
+                        required: 'Username is required'
                       })}
                     />
                   </div>
-                  {errors.email && (
+                  {errors.username && (
                     <p className="mt-2 flex items-center text-sm text-error-600">
                       <span className="mr-2 h-1 w-1 rounded-full bg-error-600"></span>
-                      {errors.email.message}
+                      {errors.username.message}
                     </p>
                   )}
                 </div>
@@ -122,7 +115,7 @@ const LoginPage = () => {
                       className={`w-full rounded-xl border bg-white px-11 py-3 text-sm shadow-sm outline-none transition focus:ring-2 focus:ring-primary-500 focus:border-primary-500 ${
                         errors.password
                           ? 'border-error-300 bg-error-50 focus:ring-error-500 focus:border-error-500'
-                          : 'border-neutral-300 hover-border-primary-400'
+                          : 'border-neutral-300 hover:border-primary-400'
                       }`}
                       placeholder="Enter your password"
                       {...register('password', {
@@ -162,15 +155,6 @@ const LoginPage = () => {
               </button>
             </form>
 
-            <div className="mt-8 text-center">
-              <button
-                type="button"
-                onClick={handleForgotPassword}
-                className="text-sm text-primary-600 hover:text-primary-500 transition"
-              >
-                Forgot your password?
-              </button>
-            </div>
           </div>
         </section>
       </div>

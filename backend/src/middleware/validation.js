@@ -55,9 +55,10 @@ const schemas = {
     password: Joi.string().min(8).required(),
     
     login: Joi.object({
-        email: Joi.string().email().required(),
+        username: Joi.string().optional(),
+        email: Joi.string().email().optional(),
         password: Joi.string().required()
-    }),
+    }).or('username', 'email'),
     
     createUser: Joi.object({
         email: Joi.string().email().required(),

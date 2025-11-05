@@ -57,26 +57,29 @@ const getClearAuthCookieOptions = () => ({ ...baseAuthCookieOptions, expires: ne
 
 // Hardcoded user accounts - easy to edit
 const HARDCODED_USERS = {
-    'admin@admin.com': {
+    'admin': {
         password: 'admin123',
         name: 'System Administrator',
-        role: 'admin'
+        role: 'admin',
+        email: 'admin@chickadeex.com'
     },
-    'test@test.com': {
+    'test': {
         password: 'test123',
         name: 'Test User',
-        role: 'observer'
+        role: 'observer',
+        email: 'test@chickadeex.com'
     }
 };
 
 // Local login
 router.post('/login', validateRequest(schemas.login), async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { username, email, password } = req.body;
+        const loginInput = username || email; // Support both username and email fields
         const db = getDB();
 
-        // Check hardcoded users first
-        const hardcodedUser = HARDCODED_USERS[email];
+        // Check hardcoded users first (by username)
+        const hardcodedUser = HARDCODED_USERS[loginInput];
         if (hardcodedUser && hardcodedUser.password === password) {
             // Create or get user from database
             const roleQuery = 'SELECT id FROM roles WHERE name = $1';
@@ -86,13 +89,13 @@ router.post('/login', validateRequest(schemas.login), async (req, res) => {
                 return res.status(500).json({ error: 'Role not found' });
             }
 
-            // Check if user exists in database
+            // Check if user exists in database (by email)
             let userRecord = await db.query(`
                 SELECT u.id, u.email, u.name, u.is_active, r.name as role
                 FROM users u
                 JOIN roles r ON u.role_id = r.id
                 WHERE u.email = $1
-            `, [email]);
+            `, [hardcodedUser.email]);
 
             let user;
             if (userRecord.rows.length === 0) {
@@ -101,11 +104,11 @@ router.post('/login', validateRequest(schemas.login), async (req, res) => {
                     INSERT INTO users (email, name, role_id, is_active, local_password)
                     VALUES ($1, $2, $3, true, $4)
                     RETURNING id
-                `, [email, hardcodedUser.name, roleResult.rows[0].id, await bcrypt.hash(hardcodedUser.password, 10)]);
+                `, [hardcodedUser.email, hardcodedUser.name, roleResult.rows[0].id, await bcrypt.hash(hardcodedUser.password, 10)]);
 
                 user = {
                     id: insertResult.rows[0].id,
-                    email: email,
+                    email: hardcodedUser.email,
                     name: hardcodedUser.name,
                     role: hardcodedUser.role,
                     is_active: true
@@ -177,11 +180,11 @@ router.post('/login', validateRequest(schemas.login), async (req, res) => {
             WHERE u.email = $1
         `;
 
-        const result = await db.query(userQuery, [email]);
+        const result = await db.query(userQuery, [loginInput]);
 
         if (result.rows.length === 0) {
             await createAuditLog(null, 'login_failed', 'user', null, {
-                email,
+                loginInput,
                 reason: 'user_not_found',
                 ip: req.ip,
                 user_agent: req.get('User-Agent')
