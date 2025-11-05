@@ -176,7 +176,7 @@ router.post('/sso/callback', async (req, res) => {
         }
 
         // Verify token with Keycloak
-        const keycloakUrl = process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_URL;
+        const keycloakUrl = process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_FRONTEND_URL || process.env.KEYCLOAK_URL;
         if (!keycloakUrl) {
             logger.error('SSO callback missing Keycloak URL configuration');
             return res.status(500).json({ error: 'SSO misconfigured' });
@@ -355,7 +355,7 @@ router.get('/sso/redirect', async (req, res) => {
             return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=missing_code`);
         }
 
-        const keycloakUrl = process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_URL;
+        const keycloakUrl = process.env.KEYCLOAK_INTERNAL_URL || process.env.KEYCLOAK_FRONTEND_URL || process.env.KEYCLOAK_URL;
         if (!keycloakUrl) {
             logger.error('SSO redirect missing Keycloak URL configuration');
             return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=sso_config`);

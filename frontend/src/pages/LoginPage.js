@@ -37,9 +37,8 @@ const LoginPage = () => {
   const handleKeycloakLogin = () => {
     const publicProtocol = (process.env.REACT_APP_PUBLIC_PROTOCOL || window.location.protocol.replace(':', '')).replace(/:$/, '');
     const publicHost = process.env.REACT_APP_PUBLIC_HOSTNAME || window.location.hostname;
-    const keycloakPort = process.env.REACT_APP_KEYCLOAK_PORT || '8080';
 
-    const keycloakUrl = process.env.REACT_APP_KEYCLOAK_URL || `${publicProtocol}://${publicHost}:${keycloakPort}`;
+    const keycloakUrl = process.env.REACT_APP_KEYCLOAK_URL || `${publicProtocol}://${publicHost}/kc`;
     const realm = process.env.REACT_APP_KEYCLOAK_REALM || 'medical-reports';
     const clientId = process.env.REACT_APP_KEYCLOAK_CLIENT_ID || 'medical-reports-client';
     const apiBase = process.env.REACT_APP_API_URL || `${publicProtocol}://${publicHost}:3000`;
