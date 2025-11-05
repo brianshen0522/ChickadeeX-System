@@ -47,8 +47,8 @@ echo "[keycloak-config] SSL requirements updated."
 # --- Client bootstrap/update ---
 APP_REALM="${KEYCLOAK_REALM:-medical-reports}"
 CLIENT_ID="${KEYCLOAK_CLIENT_ID:-medical-reports-client}"
-FRONTEND_URL="${FRONTEND_URL:-http://localhost:3001}"
-BACKEND_URL="${BACKEND_URL:-http://localhost:3000}"
+FRONTEND_URL="${FRONTEND_URL:-http://localhost}"
+BACKEND_URL="${BACKEND_URL:-http://localhost}"
 
 # Derive normalized redirect URIs and origins
 LOGIN_REDIRECT_URI="${BACKEND_URL}/api/auth/sso/redirect"
