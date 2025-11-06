@@ -943,7 +943,29 @@ const UploadViewerPage = () => {
     if (!text) return;
 
     try {
-      await navigator.clipboard.writeText(text);
+      // Check if clipboard API is available
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        // Fallback for older browsers or non-secure contexts
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed'; 
+        textArea.style.left = '-999999px';
+        textArea.style.top = '-999999px';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        
+        try {
+          document.execCommand('copy');
+          textArea.remove();
+        } catch (err) {
+          textArea.remove();
+          throw err;
+        }
+      }
+      
       setCopiedStates((prev) => ({ ...prev, [field]: true }));
       setTimeout(() => {
         setCopiedStates((prev) => ({ ...prev, [field]: false }));
@@ -958,7 +980,7 @@ const UploadViewerPage = () => {
   const renderUploadsDropdown = (options = {}) => {
     const { fullWidth = false } = options;
     const containerClass = `relative${fullWidth ? ' w-full' : ''}`;
-    const uploadButtonClass = `group relative inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_28px_-8px_rgba(37,99,235,0.6)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_14px_38px_-8px_rgba(37,99,235,0.7)] focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:ring-offset-2${fullWidth ? ' w-full' : ''}`;
+    const uploadButtonClass = `group relative inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-6 py-3 text-sm font-semibold text-white shadow-[0_10px_28px_-8px_rgba(37,99,235,0.6)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_14px_38px_-8px_rgba(37,99,235,0.7)] focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:ring-offset-2${fullWidth ? ' w-full' : ''}`;
 
     return (
       <div className={containerClass} ref={uploadDropdownRef}>
@@ -1369,7 +1391,7 @@ const UploadViewerPage = () => {
           <div className="min-h-[120px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical">
             {hasSavedDraft && selectedUpload ? (
               <div className="space-y-3">
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-start">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-center">
                   <div className="flex flex-col gap-3">
                     <div className="min-w-0">
                       <label htmlFor="study-title" className="sr-only">Study Title</label>
@@ -1424,13 +1446,12 @@ const UploadViewerPage = () => {
                       )}
                       <span>Save Report</span>
                     </button>
-                    <div className="min-h-[1rem]" />
                   </div>
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-start">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-center">
                   <div className="flex flex-col gap-3">
                     <div className="min-w-0">
                       <label htmlFor="study-title-new" className="sr-only">Study Title</label>
@@ -1485,7 +1506,6 @@ const UploadViewerPage = () => {
                       )}
                       <span>Save Report</span>
                     </button>
-                    <div className="min-h-[1rem]" />
                   </div>
                 </div>
               </div>

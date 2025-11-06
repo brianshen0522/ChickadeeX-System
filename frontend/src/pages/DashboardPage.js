@@ -16,7 +16,8 @@ import {
   ArrowRight,
   CheckCircle,
   Clock,
-  UploadCloud
+  UploadCloud,
+  Edit3
 } from 'lucide-react';
 import { getStatistics, getUserStats } from '../services/adminService';
 import { getReportsStats } from '../services/reportService';
@@ -318,87 +319,216 @@ const DashboardPage = () => {
       )}
 
       {role === 'observer' ? (
-        <div className="mx-auto w-full max-w-4xl">
-          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-medical">
-            <div className="grid grid-cols-1 gap-0 md:grid-cols-[1.1fr_0.9fr]">
-              <div className="p-10 md:p-12 bg-gradient-to-br from-blue-50 via-white to-white">
-                <div className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-blue-600">
-                  Observer Mode
-                </div>
-                <h2 className="mt-6 text-3xl font-bold text-slate-900">
-                  Experience the ChickadeeX Demo Workspace
-                </h2>
-                <p className="mt-4 max-w-lg text-base text-slate-600">
-                  Jump into our guided demo to explore the BlueLight viewer, AI-assisted reporting, and streamlined study management without configuration. Perfect for first impressions and live walk-throughs.
-                </p>
-                <div className="mt-8 flex flex-wrap gap-3">
-                  <Link
-                    to="/demo"
-                    className="group inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-6 py-3 text-base font-semibold text-white shadow-[0_18px_35px_-12px_rgba(37,99,235,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_45px_-12px_rgba(37,99,235,0.55)] focus:outline-none focus:ring-4 focus:ring-blue-500/30"
-                  >
-                    <UploadCloud className="h-5 w-5" />
-                    Try the Demo
-                    <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
-                  </Link>
-                  <Link
-                    to="/reports"
-                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50"
-                  >
-                    <FileText className="h-5 w-5" />
-                    Browse Reports
-                  </Link>
-                </div>
+        <div className="mx-auto w-full max-w-5xl space-y-6">
+          {/* Hero Section with CTA */}
+          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-blue-50 via-white to-white p-8 shadow-medical md:p-12">
+            <div className="mx-auto max-w-3xl text-center">
+              <h1 className="text-4xl font-bold text-slate-900 md:text-5xl">
+                Try ChickadeeX System
+              </h1>
+              <p className="mt-4 text-lg text-slate-600">
+                Experience AI-assisted medical reporting in 4 simple steps
+              </p>
+              <div className="mt-8">
+                <Link
+                  to="/demo"
+                  className="group inline-flex items-center gap-3 rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-8 py-4 text-lg font-semibold text-white shadow-[0_18px_35px_-12px_rgba(37,99,235,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_45px_-12px_rgba(37,99,235,0.55)] focus:outline-none focus:ring-4 focus:ring-blue-500/30"
+                >
+                  <UploadCloud className="h-6 w-6" />
+                  Try the Demo Now
+                  <ArrowRight className="h-6 w-6 transition-transform group-hover:translate-x-1" />
+                </Link>
               </div>
-              <div className="relative overflow-hidden p-10 md:p-0">
-                <div className="absolute inset-0 bg-gradient-to-br from-blue-500 via-slate-900 to-black opacity-70" />
-                <div className="relative h-full w-full">
-                  <div className="flex h-full flex-col justify-between p-10 text-white">
-                    <div>
-                      <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em]">
-                        Walkthrough
+            </div>
+          </div>
+
+          {/* Simple Guide Steps */}
+          <div className="space-y-4">
+            {/* Step 1: Upload */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+              <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg">
+                    <UploadCloud className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-600">
+                        1
                       </span>
-                      <h3 className="mt-5 text-2xl font-bold">
-                        What you can explore
-                      </h3>
-                      <ul className="mt-6 space-y-4 text-sm text-white/80">
-                        <li className="flex items-start gap-3">
-                          <span className="mt-1 inline-flex h-2 w-2 flex-shrink-0 rounded-full bg-blue-200" />
-                          <div>
-                            <p className="font-semibold text-white">BlueLight viewer</p>
-                            <p>Navigate imaging studies with synchronized report previews.</p>
-                          </div>
-                        </li>
-                        <li className="flex items-start gap-3">
-                          <span className="mt-1 inline-flex h-2 w-2 flex-shrink-0 rounded-full bg-blue-200" />
-                          <div>
-                            <p className="font-semibold text-white">AI assistance</p>
-                            <p>Generate draft findings and impressions in a click.</p>
-                          </div>
-                        </li>
-                        <li className="flex items-start gap-3">
-                          <span className="mt-1 inline-flex h-2 w-2 flex-shrink-0 rounded-full bg-blue-200" />
-                          <div>
-                            <p className="font-semibold text-white">Versioning & audit</p>
-                            <p>See how ChickadeeX tracks edits with version history.</p>
-                          </div>
-                        </li>
-                      </ul>
+                      <h3 className="text-lg font-bold text-slate-900">Upload</h3>
                     </div>
-                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur">
-                      <p className="text-sm text-white/80">Prefer a step-by-step walkthrough?</p>
-                      <Link
-                        to="/guide"
-                        className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/40 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:border-white/60 hover:bg-white/20"
-                      >
-                        Open Guide
-                        <ArrowRight className="h-4 w-4" />
-                      </Link>
-                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Click Demo, then upload your X-ray image
+                    </p>
+                  </div>
+                </div>
+                {/* Video Placeholder */}
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="aspect-video flex items-center justify-center">
+                    <video
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      disablePictureInPicture
+                      controlsList="nodownload nofullscreen noremoteplayback"
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <source src="/assets/guide/main_1_upload.mp4" type="video/mp4" />
+                      <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
+                        Video: main_1_upload.mp4
+                      </div>
+                    </video>
                   </div>
                 </div>
               </div>
             </div>
-          </section>
+
+            {/* Step 2: Generate */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+              <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg">
+                    <Sparkles className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-purple-100 text-xs font-bold text-purple-600">
+                        2
+                      </span>
+                      <h3 className="text-lg font-bold text-slate-900">Generate</h3>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Click Generate for AI-assisted report
+                    </p>
+                  </div>
+                </div>
+                {/* Video Placeholder */}
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="aspect-video flex items-center justify-center">
+                    <video
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      disablePictureInPicture
+                      controlsList="nodownload nofullscreen noremoteplayback"
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <source src="/assets/guide/main_2_generate.mp4" type="video/mp4" />
+                      <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
+                        Video: main_2_generate.mp4
+                      </div>
+                    </video>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 3: Edit & Save */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+              <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-green-600 text-white shadow-lg">
+                    <Edit3 className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-green-100 text-xs font-bold text-green-600">
+                        3
+                      </span>
+                      <h3 className="text-lg font-bold text-slate-900">Edit & Save</h3>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      Review, edit, then click Save
+                    </p>
+                  </div>
+                </div>
+                {/* Video Placeholder */}
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="aspect-video flex items-center justify-center">
+                    <video
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      disablePictureInPicture
+                      controlsList="nodownload nofullscreen noremoteplayback"
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <source src="/assets/guide/main_3_edit_save.mp4" type="video/mp4" />
+                      <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
+                        Video: main_3_edit_save.mp4
+                      </div>
+                    </video>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 4: Manage */}
+            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+              <div className="grid gap-6 md:grid-cols-[auto_1fr]">
+                <div className="flex items-start gap-4">
+                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg">
+                    <FileText className="h-7 w-7" />
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="inline-flex h-6 w-6 items-center justify-center rounded-full bg-orange-100 text-xs font-bold text-orange-600">
+                        4
+                      </span>
+                      <h3 className="text-lg font-bold text-slate-900">Manage</h3>
+                    </div>
+                    <p className="mt-2 text-sm text-slate-600">
+                      View drafts in Reports section
+                    </p>
+                  </div>
+                </div>
+                {/* Video Placeholder */}
+                <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
+                  <div className="aspect-video flex items-center justify-center">
+                    <video
+                      className="h-full w-full object-cover"
+                      autoPlay
+                      loop
+                      muted
+                      playsInline
+                      disablePictureInPicture
+                      controlsList="nodownload nofullscreen noremoteplayback"
+                      onContextMenu={(e) => e.preventDefault()}
+                    >
+                      <source src="/assets/guide/main_4_manage.mp4" type="video/mp4" />
+                      <div className="flex h-full items-center justify-center p-4 text-center text-xs text-slate-400">
+                        Video: main_4_manage.mp4
+                      </div>
+                    </video>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Guide Link */}
+          <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-8 shadow-sm">
+            <div className="mx-auto max-w-md text-center">
+              <h3 className="text-xl font-bold text-slate-900">Need More Details?</h3>
+              <p className="mt-2 text-sm text-slate-600">
+                Check out our detailed guide for step-by-step instructions
+              </p>
+              <Link
+                to="/guide"
+                className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-300 bg-white px-5 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-50"
+              >
+                Open Detailed Guide
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </div>
+          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
