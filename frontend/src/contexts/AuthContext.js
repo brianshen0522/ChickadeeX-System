@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 import * as authService from '../services/authService';
 
 const AuthContext = createContext();
@@ -15,27 +16,48 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
+  const location = useLocation();
 
-  // Check for existing session on mount
+  // Check for existing session on mount (but skip on login page)
   useEffect(() => {
     authService.bootstrapAuthToken();
-    checkAuthStatus();
-  }, []);
 
-  const checkAuthStatus = async () => {
+    // Don't check auth status on login page to avoid unnecessary API calls
+    if (location.pathname !== '/login') {
+      checkAuthStatus();
+    } else {
+      setIsLoading(false);
+    }
+  }, [location.pathname]);
+
+  const checkAuthStatus = async (retryCount = 0) => {
+    let authError = null;
+
     try {
       // Try to get current user - cookie will be sent automatically
       const userData = await authService.getCurrentUser();
       setUser(userData.user);
       setIsAuthenticated(true);
     } catch (error) {
+      authError = error;
       console.error('Auth check failed:', error);
+
+      // Handle specific error cases
       if (error?.response?.status === 401) {
         authService.clearAuthToken();
+      } else if (error?.response?.status >= 500 && retryCount < 3) {
+        // Retry on server errors with exponential backoff
+        console.log(`Retrying auth check (attempt ${retryCount + 1})`);
+        setTimeout(() => {
+          checkAuthStatus(retryCount + 1);
+        }, Math.pow(2, retryCount) * 1000); // 1s, 2s, 4s
+        return; // Don't set loading to false yet
       }
       // No need to clear localStorage, cookies are handled by server
     } finally {
-      setIsLoading(false);
+      if (retryCount === 0 || !authError || authError?.response?.status < 500) {
+        setIsLoading(false);
+      }
     }
   };
 

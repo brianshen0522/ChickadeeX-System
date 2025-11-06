@@ -12,7 +12,6 @@ import {
   ClipboardCheck,
   FileImage,
   Film,
-  FolderOpen,
   CheckCircle2,
   FileText
 } from 'lucide-react';
@@ -95,6 +94,10 @@ const UploadViewerPage = () => {
   const [isDeletingUpload, setIsDeletingUpload] = useState(false);
   const savedIndicatorTimer = useRef(null);
   const [isMetadataSaving, setIsMetadataSaving] = useState(false);
+
+  // Drag and drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+  const [dragDepth, setDragDepth] = useState(0);
 
   const selectedUpload = useMemo(() => {
     return uploads.find((upload) => upload.id === selectedUploadId) || null;
@@ -450,7 +453,19 @@ const UploadViewerPage = () => {
 
   const handleUpload = async (event) => {
     const files = Array.from(event.target.files || []);
+    await processFiles(files);
+    event.target.value = ''; // Clear the input
+  };
+
+  // Helper function to process files (shared between click and drag upload)
+  const processFiles = async (files) => {
     if (!files.length) return;
+
+    // Restrict to single file only
+    if (files.length > 1) {
+      toast.error('Please select only one image at a time');
+      return;
+    }
 
     const allowedTypes = ['.jpg', '.jpeg', '.png', '.webp', '.dcm', '.dicom'];
     const invalidFiles = files.filter((file) => {
@@ -461,7 +476,6 @@ const UploadViewerPage = () => {
     if (invalidFiles.length) {
       const names = invalidFiles.map((file) => file.name).join(', ');
       toast.error(`Invalid file type(s): ${names}`);
-      event.target.value = '';
       return;
     }
 
@@ -486,16 +500,49 @@ const UploadViewerPage = () => {
       }
 
       if (successCount) {
-        toast.success(`${successCount} file(s) uploaded`);
+        toast.success('Image uploaded successfully');
         refreshUploads({ selectNewest: true });
       }
       if (failureCount) {
-        toast.error(`${failureCount} file(s) failed to upload`);
+        toast.error('Failed to upload image');
       }
     } finally {
       setIsUploading(false);
-      event.target.value = '';
     }
+  };
+
+  // Drag and drop handlers
+  const handleDragEnter = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragDepth(prev => prev + 1);
+    if (e.dataTransfer.items && e.dataTransfer.items.length > 0) {
+      setIsDragOver(true);
+    }
+  };
+
+  const handleDragLeave = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragDepth(prev => prev - 1);
+    if (dragDepth === 1) {
+      setIsDragOver(false);
+    }
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+  };
+
+  const handleDrop = async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+    setDragDepth(0);
+
+    const files = Array.from(e.dataTransfer.files || []);
+    await processFiles(files);
   };
 
   const openDeleteModal = (upload, event) => {
@@ -816,14 +863,14 @@ const UploadViewerPage = () => {
       <button
         type="button"
         onClick={() => setIsUploadMenuOpen((prev) => !prev)}
-        aria-label="Manage studies"
+        aria-label="Upload images"
         aria-haspopup="menu"
         aria-expanded={isUploadMenuOpen}
-        className="group relative inline-flex items-center justify-center gap-2 overflow-hidden rounded-xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-[0_8px_25px_-8px_rgba(37,99,235,0.4)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_12px_35px_-8px_rgba(37,99,235,0.5)] focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:ring-offset-2"
+        className="group relative inline-flex items-center justify-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-8 py-4 text-lg font-bold text-white shadow-[0_12px_35px_-8px_rgba(37,99,235,0.6)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_16px_45px_-8px_rgba(37,99,235,0.7)] focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:ring-offset-2 animate-pulse"
       >
         <span className="pointer-events-none absolute inset-0 bg-blue-500/20 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-        <FolderOpen className="relative h-4 w-4" />
-        <span className="relative">Manage Studies</span>
+        <UploadCloud className="relative h-6 w-6" />
+        <span className="relative text-base">Upload</span>
       </button>
       {isUploadMenuOpen && (
         <div className="absolute right-0 z-30 mt-2 w-80 max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
@@ -834,7 +881,6 @@ const UploadViewerPage = () => {
               Upload
               <input
                 type="file"
-                multiple
                 accept=".jpg,.jpeg,.png,.webp,.dcm,.dicom"
                 onChange={handleUpload}
                 disabled={isUploading}
@@ -901,7 +947,8 @@ const UploadViewerPage = () => {
               })
             ) : (
               <div className="rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 py-6 text-center text-xs text-slate-500">
-                No uploads yet.
+                <p>No images uploaded yet.</p>
+                <p className="mt-1 text-blue-600 font-medium">Click "Upload" above to add one image at a time</p>
               </div>
             )}
             {nextCursor && (
@@ -922,21 +969,21 @@ const UploadViewerPage = () => {
   const renderViewer = () => {
     if (!selectedUpload) {
       return (
-        <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-center">
+        <div className="flex h-full w-full flex-col items-center justify-center rounded-2xl border border-slate-200 bg-white text-center">
           <div className="mb-5 flex h-20 w-20 items-center justify-center rounded-full border border-slate-200 bg-slate-50">
             <FileImage className="h-10 w-10 text-slate-400" />
           </div>
           <h2 className="text-xl font-semibold text-slate-900">No study selected</h2>
           <p className="mt-2 max-w-md text-sm text-slate-500">
-            Use the Uploads menu above to choose a study. DICOM and standard images will load directly in the BlueLight viewer.
+            Click the Upload button above or drag and drop an image anywhere on this page. DICOM and standard images will load directly in the BlueLight viewer.
           </p>
         </div>
       );
     }
 
     return (
-      <div className="relative h-full overflow-hidden rounded-2xl border border-slate-200 bg-black shadow-medical">
-        <div className="absolute inset-0">
+      <div className="h-full w-full overflow-hidden rounded-2xl border border-slate-200 bg-black shadow-medical">
+        <div className="h-full w-full">
           {viewerSrc ? (
             <iframe
               key={`${viewerFrameKey}-${selectedUpload.id}`}
@@ -946,7 +993,7 @@ const UploadViewerPage = () => {
               allowFullScreen
             />
           ) : (
-            <div className="flex h-full flex-col items-center justify-center bg-slate-900 px-6 text-center">
+            <div className="flex h-full w-full flex-col items-center justify-center bg-slate-900 px-6 text-center">
               <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full border border-slate-700 bg-slate-900/70">
                 <FileImage className="h-10 w-10 text-slate-400" />
               </div>
@@ -957,14 +1004,13 @@ const UploadViewerPage = () => {
             </div>
           )}
         </div>
-
       </div>
     );
   };
 
   const renderReportPanel = () => {
     return (
-      <aside className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
+      <aside className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
         <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-2 sm:flex-row sm:items-center sm:gap-3">
           <div className="flex items-center gap-3 flex-shrink-0">
             <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Version</span>
@@ -1058,9 +1104,9 @@ const UploadViewerPage = () => {
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
           ) : (
-            <>
+            <div className="flex flex-col h-full gap-3">
               <section className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 flex-shrink-0">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Findings</span>
                   <button
                     type="button"
@@ -1080,12 +1126,12 @@ const UploadViewerPage = () => {
                   value={reportState.findings}
                   onChange={(event) => handleFieldChange('findings', event.target.value)}
                   placeholder="Document clinical findings..."
-                  className="min-h-[10rem] w-full resize-y rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="h-[40%] w-full resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </section>
 
               <section className="flex flex-col gap-2">
-                <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center justify-between gap-2 flex-shrink-0">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Impression</span>
                   <button
                     type="button"
@@ -1105,164 +1151,250 @@ const UploadViewerPage = () => {
                   value={reportState.impression}
                   onChange={(event) => handleFieldChange('impression', event.target.value)}
                   placeholder="Summarize key takeaways and recommendations..."
-                  className="min-h-[8rem] w-full resize-y rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="h-[40%] w-full resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </section>
-            </>
+            </div>
           )}
         </div>
       </aside>
     );
   };
 
-  return (
-    <div className="flex h-full flex-col overflow-hidden px-5 py-2">
-      <div className="flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical">
-        {hasSavedDraft && selectedUpload ? (
-          <div className="space-y-3">
-            {/* Row 1: Study Title + Primary Actions */}
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex-1 min-w-0">
-                <label htmlFor="study-title" className="sr-only">Study Title</label>
+  // Show empty state when no uploads and not uploading
+  const showEmptyState = uploads.length === 0 && !isUploading && !isLoadingUploads;
+
+  // Render empty state with prominent drop zone
+  const renderEmptyState = () => (
+    <div className="flex h-screen flex-col items-center justify-center px-8">
+      <div className="w-full max-w-2xl">
+        {/* Main Drop Zone */}
+        <div className="relative rounded-3xl border-4 border-dashed border-blue-300 bg-gradient-to-br from-blue-50 to-indigo-100 px-12 py-20 text-center transition-all duration-300 hover:border-blue-400 hover:from-blue-100 hover:to-indigo-200">
+          <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-white/60 to-transparent"></div>
+
+          <div className="relative">
+            <div className="mb-6 flex justify-center">
+              <UploadCloud className="h-24 w-24 text-blue-500 animate-bounce" />
+            </div>
+
+            <h1 className="mb-4 text-4xl font-bold text-slate-800">Drop Your Image Here</h1>
+
+            <p className="mb-8 text-lg text-slate-600 max-w-md mx-auto">
+              Drag and drop your medical image anywhere on this area, or use the upload button below
+            </p>
+
+            {/* Upload Button */}
+            <div className="mb-6">
+              <label className="group cursor-pointer inline-flex items-center gap-4 rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-10 py-5 text-xl font-bold text-white shadow-[0_12px_35px_-8px_rgba(37,99,235,0.6)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_16px_45px_-8px_rgba(37,99,235,0.7)] focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:ring-offset-2">
+                <UploadCloud className="h-8 w-8" />
+                <span>Choose Image to Upload</span>
                 <input
-                  id="study-title"
-                  value={studyTitle}
-                  onChange={(event) => handleStudyTitleChange(event.target.value)}
-                  placeholder="Study name"
-                  maxLength={80}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.webp,.dcm,.dicom"
+                  onChange={handleUpload}
+                  disabled={isUploading}
+                  className="sr-only"
                 />
+              </label>
+            </div>
+
+            {/* Supported formats */}
+            <div className="flex flex-wrap justify-center gap-3 text-sm text-slate-500">
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
+                <span>JPG</span>
               </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
-                <button
-                  type="button"
-                  onClick={handleSaveMetadata}
-                  disabled={!metadataSaveEnabled || isMetadataSaving}
-                  aria-label="Save report metadata"
-                  className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isMetadataSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  <span>Save Report</span>
-                </button>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
+                <span>PNG</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+                <span>WebP</span>
+              </div>
+              <div className="flex items-center gap-1.5">
+                <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
+                <span>DICOM</span>
               </div>
             </div>
 
-            {/* Row 2: Description + Footer */}
-            <div className="flex flex-col">
-              <div className="flex-1 min-w-0">
-                <label htmlFor="study-description" className="sr-only">Study Description</label>
-                <textarea
-                  id="study-description"
-                  value={studySummary}
-                  onChange={(event) => handleStudySummaryChange(event.target.value)}
-                  placeholder="Add a short description for this study (optional)"
-                  rows={2}
-                  maxLength={220}
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-                <div className="mt-1 h-4 flex items-center justify-between">
-                  <div className="flex-shrink-0">
-                    {studySummary && (
-                      <p className="text-xs text-slate-500">
-                        {studySummary.length}/220 characters
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex-shrink-0">
-                    {metadataDirty && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        Unsaved changes
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
+            <div className="mt-6 text-xs text-slate-400 max-w-sm mx-auto">
+              Only one image at a time. Maximum file size: 10MB
             </div>
           </div>
-        ) : (
-          <div className="space-y-3">
-            {/* Row 1: Study Title + Primary Actions */}
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex-1 min-w-0">
-                <label htmlFor="study-title-new" className="sr-only">Study Title</label>
-                <input
-                  id="study-title-new"
-                  value={studyTitle}
-                  onChange={(event) => handleStudyTitleChange(event.target.value)}
-                  placeholder="Study name"
-                  maxLength={80}
-                  className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-              </div>
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
-                <button
-                  type="button"
-                  onClick={handleSaveMetadata}
-                  disabled={!metadataSaveEnabled || isMetadataSaving}
-                  aria-label="Save report metadata"
-                  className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {isMetadataSaving ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Save className="h-4 w-4" />
-                  )}
-                  <span>Save Report</span>
-                </button>
-              </div>
-            </div>
+        </div>
 
-            {/* Row 2: Description + Footer */}
-            <div className="flex flex-col">
-              <div className="flex-1 min-w-0">
-                <label htmlFor="study-description-new" className="sr-only">Study Description</label>
-                <textarea
-                  id="study-description-new"
-                  value={studySummary}
-                  onChange={(event) => handleStudySummaryChange(event.target.value)}
-                  placeholder="Add a short description for this study (optional)"
-                  rows={2}
-                  maxLength={220}
-                  className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                />
-                <div className="mt-1 h-4 flex items-center justify-between">
-                  <div className="flex-shrink-0">
-                    {studySummary && (
-                      <p className="text-xs text-slate-500">
-                        {studySummary.length}/220 characters
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex-shrink-0">
-                    {metadataDirty && (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                        <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                        Unsaved changes
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            </div>
+        {/* Upload Progress */}
+        {isUploading && (
+          <div className="mt-6 flex items-center justify-center gap-3 text-blue-600">
+            <Loader2 className="h-6 w-6 animate-spin" />
+            <span className="text-lg font-medium">Uploading your image...</span>
           </div>
         )}
       </div>
+    </div>
+  );
 
-      <div className="mt-2 flex-1 grid min-h-0 gap-4 lg:grid-cols-[minmax(0,1fr),420px]">
-        <div className="h-full min-h-0">
-          {renderViewer()}
-        </div>
-        <div className="h-full min-h-0">
-          {renderReportPanel()}
-        </div>
-      </div>
+  return (
+    <div
+      className="flex h-screen flex-col overflow-hidden px-5 py-2 relative"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
+      {showEmptyState ? (
+        renderEmptyState()
+      ) : (
+        <>
+          <div className="h-[12%] min-h-[120px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical overflow-y-auto">
+            {hasSavedDraft && selectedUpload ? (
+              <div className="space-y-3">
+                {/* Row 1: Study Title + Primary Actions */}
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="flex-1 min-w-0">
+                    <label htmlFor="study-title" className="sr-only">Study Title</label>
+                    <input
+                      id="study-title"
+                      value={studyTitle}
+                      onChange={(event) => handleStudyTitleChange(event.target.value)}
+                      placeholder="Study name"
+                      maxLength={80}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
+                    <button
+                      type="button"
+                      onClick={handleSaveMetadata}
+                      disabled={!metadataSaveEnabled || isMetadataSaving}
+                      aria-label="Save report metadata"
+                      className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isMetadataSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      <span>Save Report</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 2: Description + Footer */}
+                <div className="flex flex-col">
+                  <div className="flex-1 min-w-0">
+                    <label htmlFor="study-description" className="sr-only">Study Description</label>
+                    <textarea
+                      id="study-description"
+                      value={studySummary}
+                      onChange={(event) => handleStudySummaryChange(event.target.value)}
+                      placeholder="Add a short description for this study (optional)"
+                      rows={2}
+                      maxLength={220}
+                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                    <div className="mt-1 h-4 flex items-center justify-between">
+                      <div className="flex-shrink-0">
+                        {studySummary && (
+                          <p className="text-xs text-slate-500">
+                            {studySummary.length}/220 characters
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex-shrink-0">
+                        {metadataDirty && (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Unsaved changes
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {/* Row 1: Study Title + Primary Actions */}
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+                  <div className="flex-1 min-w-0">
+                    <label htmlFor="study-title-new" className="sr-only">Study Title</label>
+                    <input
+                      id="study-title-new"
+                      value={studyTitle}
+                      onChange={(event) => handleStudyTitleChange(event.target.value)}
+                      placeholder="Study name"
+                      maxLength={80}
+                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
+                    <button
+                      type="button"
+                      onClick={handleSaveMetadata}
+                      disabled={!metadataSaveEnabled || isMetadataSaving}
+                      aria-label="Save report metadata"
+                      className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {isMetadataSaving ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Save className="h-4 w-4" />
+                      )}
+                      <span>Save Report</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Row 2: Description + Footer */}
+                <div className="flex flex-col">
+                  <div className="flex-1 min-w-0">
+                    <label htmlFor="study-description-new" className="sr-only">Study Description</label>
+                    <textarea
+                      id="study-description-new"
+                      value={studySummary}
+                      onChange={(event) => handleStudySummaryChange(event.target.value)}
+                      placeholder="Add a short description for this study (optional)"
+                      rows={2}
+                      maxLength={220}
+                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                    />
+                    <div className="mt-1 h-4 flex items-center justify-between">
+                      <div className="flex-shrink-0">
+                        {studySummary && (
+                          <p className="text-xs text-slate-500">
+                            {studySummary.length}/220 characters
+                          </p>
+                        )}
+                      </div>
+                      <div className="flex-shrink-0">
+                        {metadataDirty && (
+                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                            Unsaved changes
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="h-[88%] flex flex-col gap-4 mt-2">
+            <div className="h-[65%] w-full flex flex-col">
+              {renderViewer()}
+            </div>
+            <div className="h-[35%] w-full flex flex-col">
+              {renderReportPanel()}
+            </div>
+          </div>
+        </>
+      )}
 
       {deleteModalOpen && (
         <div
@@ -1328,6 +1460,23 @@ const UploadViewerPage = () => {
                   </>
                 )}
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Drag and Drop Overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-blue-600/90 backdrop-blur-sm">
+          <div className="flex flex-col items-center justify-center rounded-2xl border-4 border-dashed border-white/70 bg-blue-700/50 px-12 py-16 text-center">
+            <UploadCloud className="h-16 w-16 text-white mb-4 animate-bounce" />
+            <h3 className="text-2xl font-bold text-white mb-2">Drop Your Image Here</h3>
+            <p className="text-blue-100 text-lg max-w-md">
+              Release to upload your image. Only one image at a time is allowed.
+            </p>
+            <div className="mt-4 flex items-center gap-2 text-blue-200">
+              <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
+              <span className="text-sm">JPG, PNG, WebP, DICOM supported</span>
             </div>
           </div>
         </div>

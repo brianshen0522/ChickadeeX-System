@@ -28,8 +28,8 @@ api.interceptors.response.use(
     return response;
   },
   (error) => {
-    const { response } = error;
-    
+    const { response, config } = error;
+
     if (response?.status === 401) {
       // Unauthorized - cookies are cleared by server, just redirect
       if (window.location.pathname !== '/login') {
@@ -40,14 +40,22 @@ api.interceptors.response.use(
       toast.error('Access denied. You do not have permission to perform this action.');
     } else if (response?.status === 429) {
       toast.error('Too many requests. Please wait a moment and try again.');
+    } else if (response?.status === 503) {
+      // Service unavailable - don't show toast for auth/me calls to avoid spam
+      if (!config?.url?.includes('/auth/me')) {
+        toast.error('Service temporarily unavailable. Please try again in a moment.');
+      }
     } else if (response?.status >= 500) {
-      toast.error('Server error. Please try again later.');
+      // Don't show toast for auth/me calls to avoid spam during startup
+      if (!config?.url?.includes('/auth/me')) {
+        toast.error('Server error. Please try again later.');
+      }
     } else if (response?.data?.error) {
       toast.error(response.data.error);
-    } else if (error.message) {
+    } else if (error.message && !config?.url?.includes('/auth/me')) {
       toast.error(error.message);
     }
-    
+
     return Promise.reject(error);
   }
 );

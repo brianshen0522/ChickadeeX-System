@@ -63,11 +63,11 @@ const HARDCODED_USERS = {
         role: 'admin',
         email: 'admin@chickadeex.com'
     },
-    'test': {
-        password: 'test123',
+    'user': {
+        password: 'user123',
         name: 'Test User',
         role: 'observer',
-        email: 'test@chickadeex.com'
+        email: 'user@chickadeex.com'
     }
 };
 
@@ -99,22 +99,70 @@ router.post('/login', validateRequest(schemas.login), async (req, res) => {
 
             let user;
             if (userRecord.rows.length === 0) {
-                // Create new user
-                const insertResult = await db.query(`
-                    INSERT INTO users (email, name, role_id, is_active, local_password)
-                    VALUES ($1, $2, $3, true, $4)
-                    RETURNING id
-                `, [hardcodedUser.email, hardcodedUser.name, roleResult.rows[0].id, await bcrypt.hash(hardcodedUser.password, 10)]);
+                // Create new user only if it doesn't exist
+                try {
+                    const insertResult = await db.query(`
+                        INSERT INTO users (email, name, role_id, is_active, local_password)
+                        VALUES ($1, $2, $3, true, $4)
+                        RETURNING id
+                    `, [hardcodedUser.email, hardcodedUser.name, roleResult.rows[0].id, await bcrypt.hash(hardcodedUser.password, 10)]);
 
-                user = {
-                    id: insertResult.rows[0].id,
-                    email: hardcodedUser.email,
-                    name: hardcodedUser.name,
-                    role: hardcodedUser.role,
-                    is_active: true
-                };
+                    user = {
+                        id: insertResult.rows[0].id,
+                        email: hardcodedUser.email,
+                        name: hardcodedUser.name,
+                        role: hardcodedUser.role,
+                        is_active: true
+                    };
+
+                    await createAuditLog(user.id, 'user_created_hardcoded', 'user', user.id, {
+                        username: loginInput,
+                        email: user.email,
+                        ip: req.ip,
+                        user_agent: req.get('User-Agent')
+                    });
+                } catch (insertError) {
+                    // Handle potential race condition where user was created between check and insert
+                    if (insertError.code === '23505') { // unique constraint violation
+                        // User was created by another request, fetch it
+                        const retryResult = await db.query(`
+                            SELECT u.id, u.email, u.name, u.is_active, r.name as role
+                            FROM users u
+                            JOIN roles r ON u.role_id = r.id
+                            WHERE u.email = $1
+                        `, [hardcodedUser.email]);
+
+                        if (retryResult.rows.length > 0) {
+                            user = retryResult.rows[0];
+                        } else {
+                            throw insertError; // Re-throw if still not found
+                        }
+                    } else {
+                        throw insertError; // Re-throw other errors
+                    }
+                }
             } else {
                 user = userRecord.rows[0];
+
+                // Update user info if needed (name or role might have changed in hardcoded config)
+                const needsUpdate = user.name !== hardcodedUser.name || user.role !== hardcodedUser.role;
+                if (needsUpdate) {
+                    try {
+                        await db.query(`
+                            UPDATE users SET
+                                name = $1,
+                                role_id = $2,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id = $3
+                        `, [hardcodedUser.name, roleResult.rows[0].id, user.id]);
+
+                        user.name = hardcodedUser.name;
+                        user.role = hardcodedUser.role;
+                    } catch (updateError) {
+                        // Log but don't fail login if update fails
+                        logger.warn('Failed to update hardcoded user info:', updateError);
+                    }
+                }
             }
 
             if (!user.is_active) {
