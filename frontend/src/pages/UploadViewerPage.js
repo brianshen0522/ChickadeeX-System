@@ -94,6 +94,17 @@ const UploadViewerPage = () => {
   const [isDeletingUpload, setIsDeletingUpload] = useState(false);
   const savedIndicatorTimer = useRef(null);
   const [isMetadataSaving, setIsMetadataSaving] = useState(false);
+  const viewerContainerRef = useRef(null);
+  const reportContainerRef = useRef(null);
+  const [isWideLayout, setIsWideLayout] = useState(false);
+  const viewerFlexStyle = useMemo(() => {
+    if (!isWideLayout) return undefined;
+    return { flexBasis: '70%', maxWidth: '70%' };
+  }, [isWideLayout]);
+  const reportFlexStyle = useMemo(() => {
+    if (!isWideLayout) return undefined;
+    return { flexBasis: '30%', maxWidth: '30%' };
+  }, [isWideLayout]);
 
   // Drag and drop state
   const [isDragOver, setIsDragOver] = useState(false);
@@ -269,6 +280,67 @@ const UploadViewerPage = () => {
       { label: 'Demo', href: undefined, isCurrent: true }
     ]);
   }, [setPageTitle, setPageDescription, setBreadcrumbs]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const query = window.matchMedia('(min-width: 1280px)');
+    const handleChange = (event) => setIsWideLayout(event.matches);
+    setIsWideLayout(query.matches);
+    query.addEventListener('change', handleChange);
+    return () => {
+      query.removeEventListener('change', handleChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isWideLayout) {
+      if (viewerContainerRef.current) {
+        viewerContainerRef.current.style.removeProperty('height');
+        viewerContainerRef.current.style.removeProperty('min-height');
+      }
+      return;
+    }
+
+    if (
+      typeof ResizeObserver === 'undefined' ||
+      !reportContainerRef.current ||
+      !viewerContainerRef.current
+    ) {
+      return;
+    }
+
+    const viewerEl = viewerContainerRef.current;
+
+    const updateViewerHeight = () => {
+      const rect = reportContainerRef.current.getBoundingClientRect();
+      if (!rect || !Number.isFinite(rect.height)) return;
+  viewerEl.style.height = `${rect.height}px`;
+  viewerEl.style.minHeight = `${rect.height}px`;
+    };
+
+    updateViewerHeight();
+
+    const observer = new ResizeObserver(() => {
+      updateViewerHeight();
+    });
+
+    observer.observe(reportContainerRef.current);
+
+    const handleWindowResize = () => {
+      updateViewerHeight();
+    };
+
+    window.addEventListener('resize', handleWindowResize);
+
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', handleWindowResize);
+      if (viewerEl) {
+        viewerEl.style.removeProperty('height');
+        viewerEl.style.removeProperty('min-height');
+      }
+    };
+  }, [isWideLayout]);
 
   const refreshUploads = useCallback(async (opts = {}) => {
     setIsLoadingUploads(true);
@@ -524,9 +596,17 @@ const UploadViewerPage = () => {
   const handleDragLeave = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    setDragDepth(prev => prev - 1);
-    if (dragDepth === 1) {
+    setDragDepth(prev => {
+      const next = Math.max(prev - 1, 0);
+      if (next === 0) {
+        setIsDragOver(false);
+      }
+      return next;
+    });
+    if (!e.relatedTarget || !(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) {
+      // When the pointer leaves the drop zone entirely, ensure the overlay is cleared.
       setIsDragOver(false);
+      setDragDepth(0);
     }
   };
 
@@ -544,6 +624,23 @@ const UploadViewerPage = () => {
     const files = Array.from(e.dataTransfer.files || []);
     await processFiles(files);
   };
+
+  useEffect(() => {
+    const handleGlobalDragEnd = () => {
+      setIsDragOver(false);
+      setDragDepth(0);
+    };
+
+    window.addEventListener('dragend', handleGlobalDragEnd);
+    window.addEventListener('drop', handleGlobalDragEnd);
+    window.addEventListener('dragleave', handleGlobalDragEnd);
+
+    return () => {
+      window.removeEventListener('dragend', handleGlobalDragEnd);
+      window.removeEventListener('drop', handleGlobalDragEnd);
+      window.removeEventListener('dragleave', handleGlobalDragEnd);
+    };
+  }, []);
 
   const openDeleteModal = (upload, event) => {
     if (event) {
@@ -858,20 +955,25 @@ const UploadViewerPage = () => {
     }
   };
 
-  const renderUploadsDropdown = () => (
-    <div className="relative" ref={uploadDropdownRef}>
-      <button
-        type="button"
-        onClick={() => setIsUploadMenuOpen((prev) => !prev)}
-        aria-label="Upload images"
-        aria-haspopup="menu"
-        aria-expanded={isUploadMenuOpen}
-        className="group relative inline-flex items-center justify-center gap-3 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-8 py-4 text-lg font-bold text-white shadow-[0_12px_35px_-8px_rgba(37,99,235,0.6)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_16px_45px_-8px_rgba(37,99,235,0.7)] focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:ring-offset-2 animate-pulse"
-      >
-        <span className="pointer-events-none absolute inset-0 bg-blue-500/20 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
-        <UploadCloud className="relative h-6 w-6" />
-        <span className="relative text-base">Upload</span>
-      </button>
+  const renderUploadsDropdown = (options = {}) => {
+    const { fullWidth = false } = options;
+    const containerClass = `relative${fullWidth ? ' w-full' : ''}`;
+    const uploadButtonClass = `group relative inline-flex items-center justify-center gap-2.5 overflow-hidden rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-5 py-2.5 text-sm font-semibold text-white shadow-[0_10px_28px_-8px_rgba(37,99,235,0.6)] transition-all duration-200 hover:-translate-y-1 hover:shadow-[0_14px_38px_-8px_rgba(37,99,235,0.7)] focus:outline-none focus:ring-4 focus:ring-blue-500/40 focus:ring-offset-2${fullWidth ? ' w-full' : ''}`;
+
+    return (
+      <div className={containerClass} ref={uploadDropdownRef}>
+        <button
+          type="button"
+          onClick={() => setIsUploadMenuOpen((prev) => !prev)}
+          aria-label="Upload images"
+          aria-haspopup="menu"
+          aria-expanded={isUploadMenuOpen}
+          className={uploadButtonClass}
+        >
+          <span className="pointer-events-none absolute inset-0 bg-blue-500/20 opacity-0 transition-opacity duration-200 group-hover:opacity-100" />
+          <UploadCloud className="relative h-6 w-6" />
+          <span className="relative text-base">Upload</span>
+        </button>
       {isUploadMenuOpen && (
         <div className="absolute right-0 z-30 mt-2 w-80 max-h-96 overflow-y-auto rounded-lg border border-slate-200 bg-white shadow-lg">
           <div className="sticky top-0 flex items-center justify-between border-b border-slate-200 bg-slate-50 px-3 py-2">
@@ -963,8 +1065,9 @@ const UploadViewerPage = () => {
           </div>
         </div>
       )}
-    </div>
-  );
+      </div>
+    );
+  };
 
   const renderViewer = () => {
     if (!selectedUpload) {
@@ -982,8 +1085,8 @@ const UploadViewerPage = () => {
     }
 
     return (
-      <div className="h-full w-full overflow-hidden rounded-2xl border border-slate-200 bg-black shadow-medical">
-        <div className="h-full w-full">
+      <div className="flex h-full w-full overflow-hidden rounded-2xl border border-slate-200 bg-black shadow-medical">
+        <div className="flex-1 h-full w-full">
           {viewerSrc ? (
             <iframe
               key={`${viewerFrameKey}-${selectedUpload.id}`}
@@ -1012,12 +1115,12 @@ const UploadViewerPage = () => {
     return (
       <aside className="flex h-full w-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
         <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-2 sm:flex-row sm:items-center sm:gap-3">
-          <div className="flex items-center gap-3 flex-shrink-0">
-            <span className="text-xs font-semibold uppercase tracking-[0.08em] text-slate-500">Version</span>
+          <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
             <select
+              aria-label="Select report version"
               value={reportState.activeVersion != null ? String(reportState.activeVersion) : ''}
               onChange={handleVersionChange}
-              className="h-8 w-36 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="h-9 w-32 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
               disabled={!versionsSorted.length && !reportState.hasUnsavedChanges}
             >
               {(reportState.hasUnsavedChanges || !versionsSorted.length) && (
@@ -1072,7 +1175,7 @@ const UploadViewerPage = () => {
           </div>
         </div>
 
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
+  <div className="flex-1 px-4 py-1.5 space-y-1.5 min-h-0">
           {selectedUpload && (
             <div className="flex items-start justify-between gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
               <div className="min-w-0 flex-1">
@@ -1104,8 +1207,11 @@ const UploadViewerPage = () => {
               <Loader2 className="h-5 w-5 animate-spin" />
             </div>
           ) : (
-            <div className="flex flex-col h-full gap-3">
-              <section className="flex flex-col gap-2">
+            <div className="flex h-full flex-col gap-2 min-h-0">
+              <section
+                className="flex flex-1 flex-col gap-1.5"
+                style={{ flexBasis: '38%', maxHeight: '40%' }}
+              >
                 <div className="flex items-center justify-between gap-2 flex-shrink-0">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Findings</span>
                   <button
@@ -1122,15 +1228,23 @@ const UploadViewerPage = () => {
                     Copy
                   </button>
                 </div>
-                <textarea
-                  value={reportState.findings}
-                  onChange={(event) => handleFieldChange('findings', event.target.value)}
-                  placeholder="Document clinical findings..."
-                  className="h-[40%] w-full resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div
+                  className="relative flex-1 overflow-hidden rounded-md border border-slate-200 bg-white transition focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-inset focus-within:ring-blue-400/60"
+                  style={{ minHeight: '96px' }}
+                >
+                  <textarea
+                    value={reportState.findings}
+                    onChange={(event) => handleFieldChange('findings', event.target.value)}
+                    placeholder="Document clinical findings..."
+                    className="h-full w-full resize-none border-0 bg-transparent px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none"
+                  />
+                </div>
               </section>
 
-              <section className="flex flex-col gap-2">
+              <section
+                className="flex flex-1 flex-col gap-1.5"
+                style={{ flexBasis: '38%', maxHeight: '40%' }}
+              >
                 <div className="flex items-center justify-between gap-2 flex-shrink-0">
                   <span className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Impression</span>
                   <button
@@ -1147,12 +1261,17 @@ const UploadViewerPage = () => {
                     Copy
                   </button>
                 </div>
-                <textarea
-                  value={reportState.impression}
-                  onChange={(event) => handleFieldChange('impression', event.target.value)}
-                  placeholder="Summarize key takeaways and recommendations..."
-                  className="h-[40%] w-full resize-none rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <div
+                  className="relative flex-1 overflow-hidden rounded-md border border-slate-200 bg-white transition focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-inset focus-within:ring-blue-400/60"
+                  style={{ minHeight: '96px' }}
+                >
+                  <textarea
+                    value={reportState.impression}
+                    onChange={(event) => handleFieldChange('impression', event.target.value)}
+                    placeholder="Summarize key takeaways and recommendations..."
+                    className="h-full w-full resize-none border-0 bg-transparent px-3 py-2 text-sm text-slate-700 placeholder-slate-400 focus:outline-none"
+                  />
+                </div>
               </section>
             </div>
           )}
@@ -1237,7 +1356,7 @@ const UploadViewerPage = () => {
 
   return (
     <div
-      className="flex h-screen flex-col overflow-hidden px-5 py-2 relative"
+      className="flex h-screen flex-col overflow-y-auto overflow-x-hidden px-5 py-2 relative"
       onDragEnter={handleDragEnter}
       onDragLeave={handleDragLeave}
       onDragOver={handleDragOver}
@@ -1247,30 +1366,56 @@ const UploadViewerPage = () => {
         renderEmptyState()
       ) : (
         <>
-          <div className="h-[12%] min-h-[120px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical overflow-y-auto">
+          <div className="min-h-[120px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical">
             {hasSavedDraft && selectedUpload ? (
               <div className="space-y-3">
-                {/* Row 1: Study Title + Primary Actions */}
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex-1 min-w-0">
-                    <label htmlFor="study-title" className="sr-only">Study Title</label>
-                    <input
-                      id="study-title"
-                      value={studyTitle}
-                      onChange={(event) => handleStudyTitleChange(event.target.value)}
-                      placeholder="Study name"
-                      maxLength={80}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-start">
+                  <div className="flex flex-col gap-3">
+                    <div className="min-w-0">
+                      <label htmlFor="study-title" className="sr-only">Study Title</label>
+                      <input
+                        id="study-title"
+                        value={studyTitle}
+                        onChange={(event) => handleStudyTitleChange(event.target.value)}
+                        placeholder="Study name"
+                        maxLength={80}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label htmlFor="study-description" className="sr-only">Study Description</label>
+                      <textarea
+                        id="study-description"
+                        value={studySummary}
+                        onChange={(event) => handleStudySummaryChange(event.target.value)}
+                        placeholder="Add a short description for this study (optional)"
+                        rows={1}
+                        maxLength={220}
+                        className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 h-[48px]"
+                      />
+                      <div className="mt-0.5 flex min-h-[1rem] items-center justify-between gap-2">
+                        <div className="flex-shrink-0 text-xs text-slate-500">
+                          {studySummary && `${studySummary.length}/220 characters`}
+                        </div>
+                        <div className="flex-shrink-0">
+                          {metadataDirty && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              Unsaved changes
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
+                  <div className="flex flex-col gap-2 xl:ml-auto xl:w-[220px]">
+                    {renderUploadsDropdown({ fullWidth: true })}
                     <button
                       type="button"
                       onClick={handleSaveMetadata}
                       disabled={!metadataSaveEnabled || isMetadataSaving}
                       aria-label="Save report metadata"
-                      className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isMetadataSaving ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -1279,65 +1424,59 @@ const UploadViewerPage = () => {
                       )}
                       <span>Save Report</span>
                     </button>
-                  </div>
-                </div>
-
-                {/* Row 2: Description + Footer */}
-                <div className="flex flex-col">
-                  <div className="flex-1 min-w-0">
-                    <label htmlFor="study-description" className="sr-only">Study Description</label>
-                    <textarea
-                      id="study-description"
-                      value={studySummary}
-                      onChange={(event) => handleStudySummaryChange(event.target.value)}
-                      placeholder="Add a short description for this study (optional)"
-                      rows={2}
-                      maxLength={220}
-                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
-                    <div className="mt-1 h-4 flex items-center justify-between">
-                      <div className="flex-shrink-0">
-                        {studySummary && (
-                          <p className="text-xs text-slate-500">
-                            {studySummary.length}/220 characters
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex-shrink-0">
-                        {metadataDirty && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            Unsaved changes
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                    <div className="min-h-[1rem]" />
                   </div>
                 </div>
               </div>
             ) : (
               <div className="space-y-3">
-                {/* Row 1: Study Title + Primary Actions */}
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-                  <div className="flex-1 min-w-0">
-                    <label htmlFor="study-title-new" className="sr-only">Study Title</label>
-                    <input
-                      id="study-title-new"
-                      value={studyTitle}
-                      onChange={(event) => handleStudyTitleChange(event.target.value)}
-                      placeholder="Study name"
-                      maxLength={80}
-                      className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-start">
+                  <div className="flex flex-col gap-3">
+                    <div className="min-w-0">
+                      <label htmlFor="study-title-new" className="sr-only">Study Title</label>
+                      <input
+                        id="study-title-new"
+                        value={studyTitle}
+                        onChange={(event) => handleStudyTitleChange(event.target.value)}
+                        placeholder="Study name"
+                        maxLength={80}
+                        className="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-lg font-semibold text-slate-900 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
+                      />
+                    </div>
+                    <div className="min-w-0">
+                      <label htmlFor="study-description-new" className="sr-only">Study Description</label>
+                      <textarea
+                        id="study-description-new"
+                        value={studySummary}
+                        onChange={(event) => handleStudySummaryChange(event.target.value)}
+                        placeholder="Add a short description for this study (optional)"
+                        rows={1}
+                        maxLength={220}
+                        className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20 h-[48px]"
+                      />
+                      <div className="mt-0.5 flex min-h-[1rem] items-center justify-between gap-2">
+                        <div className="flex-shrink-0 text-xs text-slate-500">
+                          {studySummary && `${studySummary.length}/220 characters`}
+                        </div>
+                        <div className="flex-shrink-0">
+                          {metadataDirty && (
+                            <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
+                              <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
+                              Unsaved changes
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <div className="order-2 sm:order-1">{renderUploadsDropdown()}</div>
+                  <div className="flex flex-col gap-2 xl:ml-auto xl:w-[220px]">
+                    {renderUploadsDropdown({ fullWidth: true })}
                     <button
                       type="button"
                       onClick={handleSaveMetadata}
                       disabled={!metadataSaveEnabled || isMetadataSaving}
                       aria-label="Save report metadata"
-                      className="order-1 sm:order-2 inline-flex items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                     >
                       {isMetadataSaving ? (
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -1346,50 +1485,26 @@ const UploadViewerPage = () => {
                       )}
                       <span>Save Report</span>
                     </button>
-                  </div>
-                </div>
-
-                {/* Row 2: Description + Footer */}
-                <div className="flex flex-col">
-                  <div className="flex-1 min-w-0">
-                    <label htmlFor="study-description-new" className="sr-only">Study Description</label>
-                    <textarea
-                      id="study-description-new"
-                      value={studySummary}
-                      onChange={(event) => handleStudySummaryChange(event.target.value)}
-                      placeholder="Add a short description for this study (optional)"
-                      rows={2}
-                      maxLength={220}
-                      className="w-full resize-none rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm text-slate-700 placeholder-slate-400 transition focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500/20"
-                    />
-                    <div className="mt-1 h-4 flex items-center justify-between">
-                      <div className="flex-shrink-0">
-                        {studySummary && (
-                          <p className="text-xs text-slate-500">
-                            {studySummary.length}/220 characters
-                          </p>
-                        )}
-                      </div>
-                      <div className="flex-shrink-0">
-                        {metadataDirty && (
-                          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-medium text-amber-700">
-                            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse" />
-                            Unsaved changes
-                          </span>
-                        )}
-                      </div>
-                    </div>
+                    <div className="min-h-[1rem]" />
                   </div>
                 </div>
               </div>
             )}
           </div>
 
-          <div className="h-[88%] flex flex-col gap-4 mt-2">
-            <div className="h-[65%] w-full flex flex-col">
+          <div className="mt-1 flex-1 min-h-0 flex flex-col xl:flex-row gap-3">
+            <div
+              ref={viewerContainerRef}
+              className="flex-1 min-h-[320px] xl:min-h-0 flex items-stretch"
+              style={viewerFlexStyle}
+            >
               {renderViewer()}
             </div>
-            <div className="h-[35%] w-full flex flex-col">
+            <div
+              ref={reportContainerRef}
+              className="flex-1 min-h-[320px] xl:min-h-0 flex items-stretch"
+              style={reportFlexStyle}
+            >
               {renderReportPanel()}
             </div>
           </div>

@@ -15,7 +15,8 @@ import {
   Sparkles,
   ArrowRight,
   CheckCircle,
-  Clock
+  Clock,
+  UploadCloud
 } from 'lucide-react';
 import { getStatistics, getUserStats } from '../services/adminService';
 import { getReportsStats } from '../services/reportService';
@@ -168,31 +169,6 @@ const DashboardPage = () => {
   const skeletonCount = metricCards.length || (shouldShowMetrics ? 3 : 0);
 
   const sections = useMemo(() => {
-    // Special simplified layout for observers
-    if (role === 'observer') {
-      return [
-        {
-          title: 'Available Workspaces',
-          items: [
-            {
-              name: 'Demo',
-              icon: Activity,
-              to: '/demo',
-              cta: 'Try it',
-              primary: true
-            },
-            {
-              name: 'Reports',
-              icon: FileText,
-              to: '/reports',
-              cta: 'Open Reports',
-              primary: true
-            }
-          ]
-        }
-      ];
-    }
-
     // Original layout for other roles
     const baseSections = [
       {
@@ -342,50 +318,89 @@ const DashboardPage = () => {
       )}
 
       {role === 'observer' ? (
-        // Special large box layout for observers
-        <div className="max-w-4xl mx-auto">
-          {sections.map((section) => (
-            <section
-              key={section.title}
-              className="rounded-2xl border border-slate-200 bg-white p-8 shadow-medical"
-            >
-              <div className="text-center mb-6">
-                <h2 className="text-2xl font-bold text-slate-800">
-                  {section.title}
+        <div className="mx-auto w-full max-w-4xl">
+          <section className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-medical">
+            <div className="grid grid-cols-1 gap-0 md:grid-cols-[1.1fr_0.9fr]">
+              <div className="p-10 md:p-12 bg-gradient-to-br from-blue-50 via-white to-white">
+                <div className="inline-flex items-center gap-2 rounded-full bg-blue-100 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-blue-600">
+                  Observer Mode
+                </div>
+                <h2 className="mt-6 text-3xl font-bold text-slate-900">
+                  Experience the ChickadeeX Demo Workspace
                 </h2>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {section.items.map((item) => (
+                <p className="mt-4 max-w-lg text-base text-slate-600">
+                  Jump into our guided demo to explore the BlueLight viewer, AI-assisted reporting, and streamlined study management without configuration. Perfect for first impressions and live walk-throughs.
+                </p>
+                <div className="mt-8 flex flex-wrap gap-3">
                   <Link
-                    key={item.name}
-                    to={item.to}
-                    className="group rounded-xl border border-slate-200 bg-gradient-to-br from-white to-slate-50 p-8 transition-all duration-200 hover:border-primary-300 hover:shadow-lg"
+                    to="/demo"
+                    className="group inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-6 py-3 text-base font-semibold text-white shadow-[0_18px_35px_-12px_rgba(37,99,235,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_45px_-12px_rgba(37,99,235,0.55)] focus:outline-none focus:ring-4 focus:ring-blue-500/30"
                   >
-                    <div className="text-center space-y-4">
-                      <div className="flex justify-center">
-                        <div className="flex h-16 w-16 items-center justify-center rounded-full bg-primary-100 text-primary-600 group-hover:bg-primary-200 transition-colors">
-                          <item.icon className="h-8 w-8" />
-                        </div>
-                      </div>
-                      <div className="space-y-1.5">
-                        <h3 className="text-xl font-bold text-slate-800">{item.name}</h3>
-                      </div>
-                      <div className="pt-2">
-                        <span className="inline-flex items-center text-lg font-semibold text-primary-600 group-hover:text-primary-700 transition-colors">
-                          {item.cta}
-                          <ArrowRight className="ml-2 h-5 w-5 group-hover:translate-x-1 transition-transform" />
-                        </span>
-                      </div>
-                    </div>
+                    <UploadCloud className="h-5 w-5" />
+                    Try the Demo
+                    <ArrowRight className="h-5 w-5 transition-transform group-hover:translate-x-1" />
                   </Link>
-                ))}
+                  <Link
+                    to="/reports"
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-300 bg-white px-6 py-3 text-base font-semibold text-slate-700 transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50"
+                  >
+                    <FileText className="h-5 w-5" />
+                    Browse Reports
+                  </Link>
+                </div>
               </div>
-            </section>
-          ))}
+              <div className="relative overflow-hidden p-10 md:p-0">
+                <div className="absolute inset-0 bg-gradient-to-br from-blue-500 via-slate-900 to-black opacity-70" />
+                <div className="relative h-full w-full">
+                  <div className="flex h-full flex-col justify-between p-10 text-white">
+                    <div>
+                      <span className="inline-flex items-center gap-2 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold uppercase tracking-[0.25em]">
+                        Walkthrough
+                      </span>
+                      <h3 className="mt-5 text-2xl font-bold">
+                        What you can explore
+                      </h3>
+                      <ul className="mt-6 space-y-4 text-sm text-white/80">
+                        <li className="flex items-start gap-3">
+                          <span className="mt-1 inline-flex h-2 w-2 flex-shrink-0 rounded-full bg-blue-200" />
+                          <div>
+                            <p className="font-semibold text-white">BlueLight viewer</p>
+                            <p>Navigate imaging studies with synchronized report previews.</p>
+                          </div>
+                        </li>
+                        <li className="flex items-start gap-3">
+                          <span className="mt-1 inline-flex h-2 w-2 flex-shrink-0 rounded-full bg-blue-200" />
+                          <div>
+                            <p className="font-semibold text-white">AI assistance</p>
+                            <p>Generate draft findings and impressions in a click.</p>
+                          </div>
+                        </li>
+                        <li className="flex items-start gap-3">
+                          <span className="mt-1 inline-flex h-2 w-2 flex-shrink-0 rounded-full bg-blue-200" />
+                          <div>
+                            <p className="font-semibold text-white">Versioning & audit</p>
+                            <p>See how ChickadeeX tracks edits with version history.</p>
+                          </div>
+                        </li>
+                      </ul>
+                    </div>
+                    <div className="rounded-2xl border border-white/20 bg-white/10 p-4 backdrop-blur">
+                      <p className="text-sm text-white/80">Prefer a step-by-step walkthrough?</p>
+                      <Link
+                        to="/guide"
+                        className="mt-3 inline-flex items-center gap-2 rounded-full border border-white/40 bg-white/10 px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] text-white transition hover:border-white/60 hover:bg-white/20"
+                      >
+                        Open Guide
+                        <ArrowRight className="h-4 w-4" />
+                      </Link>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
         </div>
       ) : (
-        // Original layout for other roles
         <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
           {sections.map((section) => (
             <section

@@ -311,7 +311,7 @@ const Layout = ({ children }) => {
 
             <div className="hidden md:col-span-3 md:flex md:items-center md:justify-end md:gap-6">
               <div className="flex items-center gap-4">
-                {roleLabel && (
+                {!isObserver && roleLabel && (
                   <button
                     type="button"
                     className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-xs font-semibold tracking-wide shadow-sm transition ${roleBadgeVariant} focus:outline-none focus:ring-2 focus:ring-primary-300 focus:ring-offset-2`}
@@ -320,6 +320,15 @@ const Layout = ({ children }) => {
                     {roleLabel}
                     {hasAdditionalRoles && <ChevronDown className="h-3 w-3" />}
                   </button>
+                )}
+                {isObserver && (
+                  <Link
+                    to="/guide"
+                    className="inline-flex items-center gap-2 rounded-full border border-primary-300 bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_-12px_rgba(37,99,235,0.6)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_38px_-12px_rgba(37,99,235,0.65)] focus:outline-none focus:ring-4 focus:ring-blue-500/30"
+                  >
+                    Guide
+                    <ChevronRight className="h-4 w-4" />
+                  </Link>
                 )}
                 {!isObserver && (
                   <div ref={desktopStatusRef} className="relative">
@@ -421,6 +430,15 @@ const Layout = ({ children }) => {
               <span className={`text-sm font-semibold tracking-wide ${logoAccent}`}>ChickadeeX</span>
             </Link>
             <div className="flex items-center gap-2">
+              {isObserver && (
+                <Link
+                  to="/guide"
+                  className="inline-flex items-center gap-2 rounded-full border border-primary-300 bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_-12px_rgba(37,99,235,0.6)] transition hover:-translate-y-0.5 hover:shadow-[0_16px_38px_-12px_rgba(37,99,235,0.65)] focus:outline-none focus:ring-4 focus:ring-blue-500/30"
+                >
+                  Guide
+                  <ChevronRight className="h-4 w-4" />
+                </Link>
+              )}
               {!isObserver && (
                 <div ref={mobileStatusRef} className="relative">
                   <button

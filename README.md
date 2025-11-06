@@ -11,6 +11,6 @@ docker-compose up -d --build
 ## LLM Prompt
 [Prompt - HackMD](https://hackmd.io/@k01scV43SVGsRTCkt3YowQ/HyJ056S1Zx)
 
-## 📄 License
+## License
 
 MIT License

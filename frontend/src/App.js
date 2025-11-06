@@ -20,6 +20,7 @@ const BlueLightViewerPage = lazy(() => import('./pages/BlueLightViewerPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const StudiesPage = lazy(() => import('./pages/StudiesPage'));
 const UploadViewerPage = lazy(() => import('./pages/UploadViewerPage'));
+const GuidePage = lazy(() => import('./pages/GuidePage'));
 
 // Protected Route Component
 function ProtectedRoute({ children, requiredRoles = [] }) {
@@ -126,6 +127,14 @@ function AppRoutes() {
               element={
                 <ProtectedRoute requiredRoles={['doctor', 'observer']}>
                   <UploadViewerPage />
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/guide"
+              element={
+                <ProtectedRoute>
+                  <GuidePage />
                 </ProtectedRoute>
               }
             />
