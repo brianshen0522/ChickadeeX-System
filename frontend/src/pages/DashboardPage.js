@@ -321,35 +321,30 @@ const DashboardPage = () => {
       {role === 'observer' ? (
         <div className="mx-auto w-full max-w-5xl space-y-6">
           {/* Hero Section with CTA */}
-          <div className="overflow-hidden rounded-3xl border border-slate-200 bg-gradient-to-br from-blue-50 via-white to-white p-8 shadow-medical md:p-12">
-            <div className="mx-auto max-w-3xl text-center">
-              <h1 className="text-4xl font-bold text-slate-900 md:text-5xl">
-                Try ChickadeeX System
-              </h1>
-              <p className="mt-4 text-lg text-slate-600">
-                Experience AI-assisted medical reporting in 4 simple steps
-              </p>
-              <div className="mt-8">
-                <Link
-                  to="/demo"
-                  className="group inline-flex items-center gap-3 rounded-2xl bg-gradient-to-r from-blue-500 via-blue-600 to-blue-700 px-8 py-4 text-lg font-semibold text-white shadow-[0_18px_35px_-12px_rgba(37,99,235,0.5)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_22px_45px_-12px_rgba(37,99,235,0.55)] focus:outline-none focus:ring-4 focus:ring-blue-500/30"
-                >
-                  <UploadCloud className="h-6 w-6" />
-                  Try the Demo Now
-                  <ArrowRight className="h-6 w-6 transition-transform group-hover:translate-x-1" />
-                </Link>
+          <div className="border-b border-slate-200 pb-6">
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-3xl font-bold text-slate-900">Try ChickadeeX System</h1>
+                <p className="mt-1 text-lg text-slate-600">Experience AI-assisted medical reporting in 4 simple steps</p>
               </div>
+              <Link
+                to="/demo"
+                className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
+              >
+                <UploadCloud className="h-5 w-5" />
+                <span>Try Demo</span>
+              </Link>
             </div>
           </div>
 
           {/* Simple Guide Steps */}
           <div className="space-y-4">
             {/* Step 1: Upload */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="grid gap-6 md:grid-cols-[auto_1fr]">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white shadow-lg">
-                    <UploadCloud className="h-7 w-7" />
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-blue-500 to-blue-600 text-white">
+                    <UploadCloud className="h-5 w-5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -387,11 +382,11 @@ const DashboardPage = () => {
             </div>
 
             {/* Step 2: Generate */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="grid gap-6 md:grid-cols-[auto_1fr]">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-purple-600 text-white shadow-lg">
-                    <Sparkles className="h-7 w-7" />
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-purple-500 to-purple-600 text-white">
+                    <Sparkles className="h-5 w-5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -429,11 +424,11 @@ const DashboardPage = () => {
             </div>
 
             {/* Step 3: Edit & Save */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="grid gap-6 md:grid-cols-[auto_1fr]">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-green-600 text-white shadow-lg">
-                    <Edit3 className="h-7 w-7" />
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-green-500 to-green-600 text-white">
+                    <Edit3 className="h-5 w-5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -471,11 +466,11 @@ const DashboardPage = () => {
             </div>
 
             {/* Step 4: Manage */}
-            <div className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm transition hover:shadow-md">
+            <div className="rounded-lg border border-slate-200 bg-white p-4">
               <div className="grid gap-6 md:grid-cols-[auto_1fr]">
                 <div className="flex items-start gap-4">
-                  <div className="flex h-14 w-14 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white shadow-lg">
-                    <FileText className="h-7 w-7" />
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-orange-500 to-orange-600 text-white">
+                    <FileText className="h-5 w-5" />
                   </div>
                   <div>
                     <div className="flex items-center gap-2">
@@ -514,20 +509,18 @@ const DashboardPage = () => {
           </div>
 
           {/* Guide Link */}
-          <div className="rounded-2xl border border-blue-200 bg-gradient-to-br from-blue-50 to-white p-8 shadow-sm">
-            <div className="mx-auto max-w-md text-center">
-              <h3 className="text-xl font-bold text-slate-900">Need More Details?</h3>
-              <p className="mt-2 text-sm text-slate-600">
-                Check out our detailed guide for step-by-step instructions
-              </p>
-              <Link
-                to="/guide"
-                className="mt-4 inline-flex items-center gap-2 rounded-full border border-blue-300 bg-white px-5 py-2.5 text-sm font-semibold text-blue-700 transition hover:bg-blue-50"
-              >
-                Open Detailed Guide
-                <ArrowRight className="h-4 w-4" />
-              </Link>
-            </div>
+          <div className="border-t border-slate-200 pt-6 text-center">
+            <h3 className="text-xl font-bold text-slate-900">Need More Details?</h3>
+            <p className="mt-2 text-sm text-slate-600">
+              Check out our detailed guide for step-by-step instructions
+            </p>
+            <Link
+              to="/guide"
+              className="mt-4 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              Open Detailed Guide
+              <ArrowRight className="h-4 w-4" />
+            </Link>
           </div>
         </div>
       ) : (
@@ -535,7 +528,7 @@ const DashboardPage = () => {
           {sections.map((section) => (
             <section
               key={section.title}
-              className="rounded-md border border-slate-200 bg-white p-4 shadow-sm"
+              className="rounded-lg border border-slate-200 bg-white p-4"
             >
               <div className="flex items-center justify-between border-b border-slate-200 pb-2">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-500">
@@ -551,7 +544,7 @@ const DashboardPage = () => {
                   <Link
                     key={item.name}
                     to={item.to}
-                    className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-primary-300 hover:shadow-medical"
+                    className="group rounded-lg border border-slate-200 bg-white p-4 transition hover:border-primary-300"
                   >
                     <div className="flex items-start gap-3">
                       <div className="flex h-10 w-10 items-center justify-center rounded-md bg-primary-50 text-primary-600">
