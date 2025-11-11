@@ -97,6 +97,7 @@ const UploadViewerPage = () => {
   const viewerContainerRef = useRef(null);
   const reportContainerRef = useRef(null);
   const [isWideLayout, setIsWideLayout] = useState(false);
+  const [viewerLoading, setViewerLoading] = useState(false);
   const viewerFlexStyle = useMemo(() => {
     if (!isWideLayout) return undefined;
     return { flexBasis: '70%', maxWidth: '70%' };
@@ -232,7 +233,11 @@ const UploadViewerPage = () => {
   const metadataSaveEnabled = Boolean(selectedUpload) && Boolean(studyTitle.trim());
 
   useEffect(() => {
-    if (!viewerSrc) return;
+    if (!viewerSrc) {
+      setViewerLoading(false);
+      return;
+    }
+    setViewerLoading(true);
     setViewerFrameKey((prev) => prev + 1);
   }, [viewerSrc]);
 
@@ -1061,9 +1066,9 @@ const UploadViewerPage = () => {
                       title="Delete upload"
                     >
                       {deleteBusy ? (
-                        <Loader2 className="h-3 w-3 animate-spin" />
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
-                        <Trash2 className="h-3 w-3" />
+                        <Trash2 className="h-4 w-4" />
                       )}
                     </button>
                   </button>
@@ -1110,13 +1115,22 @@ const UploadViewerPage = () => {
       <div className="flex h-full w-full overflow-hidden rounded-2xl border border-slate-200 bg-black shadow-medical">
         <div className="flex-1 h-full w-full">
           {viewerSrc ? (
-            <iframe
-              key={`${viewerFrameKey}-${selectedUpload.id}`}
-              title="BlueLight Viewer"
-              src={viewerSrc}
-              className="h-full w-full border-0"
-              allowFullScreen
-            />
+            <div className="relative h-full w-full">
+              {viewerLoading && (
+                <div className="pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-slate-950/70 text-white">
+                  <Loader2 className="h-8 w-8 animate-spin text-blue-300" />
+                  <p className="text-sm text-slate-200">Preparing viewer…</p>
+                </div>
+              )}
+              <iframe
+                key={`${viewerFrameKey}-${selectedUpload.id}`}
+                title="BlueLight Viewer"
+                src={viewerSrc}
+                className={`h-full w-full border-0 transition-opacity duration-300 ${viewerLoading ? 'opacity-0' : 'opacity-100'}`}
+                allowFullScreen
+                onLoad={() => setViewerLoading(false)}
+              />
+            </div>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center bg-slate-900 px-6 text-center">
               <div className="mb-4 flex h-20 w-20 items-center justify-center rounded-full border border-slate-700 bg-slate-900/70">
@@ -1384,6 +1398,14 @@ const UploadViewerPage = () => {
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
+      {isUploading && (
+        <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
+          <div className="flex items-center gap-2 rounded-full bg-slate-950/80 px-4 py-2 text-sm font-semibold text-white shadow-lg">
+            <Loader2 className="h-4 w-4 animate-spin text-blue-300" />
+            <span>Uploading & converting study… large DICOM files can take up to a minute.</span>
+          </div>
+        </div>
+      )}
       {showEmptyState ? (
         renderEmptyState()
       ) : (

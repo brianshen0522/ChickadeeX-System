@@ -1,14 +1,8 @@
-const fs = require('fs');
-const path = require('path');
-const sharp = require('sharp');
 const dicomParser = require('dicom-parser');
 const dicomCodec = require('@cornerstonejs/dicom-codec');
 const dcmjs = require('dcmjs');
 const { PNG } = require('pngjs');
 const jpeg = require('jpeg-js');
-const { logger } = require('./logger');
-
-const fsp = fs.promises;
 
 const NATIVE_LITTLE_ENDIAN_SYNTAXES = new Set([
   '1.2.840.10008.1.2',
@@ -16,119 +10,30 @@ const NATIVE_LITTLE_ENDIAN_SYNTAXES = new Set([
   '1.2.840.10008.1.2.1.99'
 ]);
 
-const KNOWN_COMPRESSED_SYNTAXES = new Set([
+const KNOWN_COMPRESSED_SYNTAXES = [
   '1.2.840.10008.1.2.4.50', // JPEG Baseline (Process 1)
   '1.2.840.10008.1.2.4.51', // JPEG Extended (Process 2 & 4)
-  '1.2.840.10008.1.2.4.57', // JPEG Lossless
-  '1.2.840.10008.1.2.4.70', // JPEG Lossless First Order Prediction
+  '1.2.840.10008.1.2.4.57', // JPEG Lossless, Nonhierarchical (Process 14)
+  '1.2.840.10008.1.2.4.70', // JPEG Lossless, Nonhierarchical, First Order Prediction (Process 14 [Selection Value 1])
   '1.2.840.10008.1.2.4.80', // JPEG-LS Lossless
   '1.2.840.10008.1.2.4.81', // JPEG-LS Near-lossless
-  '1.2.840.10008.1.2.4.90', // JPEG 2000 Lossless Only
-  '1.2.840.10008.1.2.4.91', // JPEG 2000
-  '1.2.840.10008.1.2.4.201', // HTJ2K Lossless
+  '1.2.840.10008.1.2.4.90', // JPEG 2000 Image Compression (Lossless Only)
+  '1.2.840.10008.1.2.4.91', // JPEG 2000 Image Compression
+  '1.2.840.10008.1.2.4.201', // HTJ2K lossless
   '1.2.840.10008.1.2.4.202',
   '1.2.840.10008.1.2.4.203',
   '1.2.840.10008.1.2.5' // RLE Lossless
-]);
+];
 
 const SUPPORTED_FORMATS = new Set(['png', 'jpg', 'jpeg']);
 
-const DICOM_MIME_TYPES = new Set([
-  'application/dicom',
-  'application/x-dicom',
-  'application/dicom+json',
-  'application/dicom+xml'
-]);
-
-const KNOWN_DICOM_EXTENSIONS = new Set([
-  '.dcm',
-  '.dicom',
-  '.dic',
-  '.dicm',
-  '.dicon',
-  '.acr',
-  '.img',
-  '.ima',
-  '.dcm30',
-  ''
-]);
-
-const DICOM_PREFIX = 'DICM';
-const DICOM_PREAMBLE_OFFSET = 128;
-const MAX_PROBE_BYTES = 4096;
-const MAX_FULL_PARSE_BYTES = 25 * 1024 * 1024;
-
-const CONVERSION_WARN_THRESHOLD_MS = Number(process.env.DICOM_CONVERSION_WARN_MS || 7000);
-
-let codecInitPromise = null;
-const ensureDicomCodecReady = async () => {
-  if (typeof dicomCodec?.initialize !== 'function') {
-    return;
-  }
-  if (!codecInitPromise) {
-    codecInitPromise = dicomCodec.initialize().catch((error) => {
-      codecInitPromise = null;
-      logger.warn('Failed to initialize DICOM codecs', { error: error.message });
-      throw error;
-    });
-  }
-  return codecInitPromise;
-};
-
-const convertDicomToImage = async (dicomPath, outputDir, baseFileName, options = {}) => {
-  const requestedFormat = options.format || 'jpg';
-  const targetFormat = SUPPORTED_FORMATS.has(requestedFormat?.toLowerCase())
-    ? requestedFormat
-    : 'jpg';
-  const conversionStarted = Date.now();
-
-  try {
-    const dicomBuffer = await fsp.readFile(dicomPath);
-    const conversion = await convertDicomBuffer(dicomBuffer, {
-      format: targetFormat,
-      frame: options.frame
-    });
-
-    const extension = conversion.contentType === 'image/png' ? 'png' : 'jpg';
-    const outputPath = path.join(outputDir, `${baseFileName}_converted.${extension}`);
-    await fsp.writeFile(outputPath, conversion.imageBuffer);
-
-    const durationMs = Date.now() - conversionStarted;
-    const slowConversion = durationMs > CONVERSION_WARN_THRESHOLD_MS;
-    logger[slowConversion ? 'warn' : 'info'](slowConversion ? 'Slow DICOM conversion' : 'DICOM converted to display image', {
-      dicomPath,
-      outputPath,
-      transferSyntax: conversion.details.transferSyntax,
-      photometricInterpretation: conversion.details.photometricInterpretation,
-      frame: conversion.details.frame,
-      rows: conversion.details.height,
-      columns: conversion.details.width,
-      durationMs
-    });
-
-    return outputPath;
-  } catch (error) {
-    logger.error('DICOM conversion failed, generating placeholder', { dicomPath, error: error.message });
-    const fallbackPath = path.join(outputDir, `${baseFileName}_converted.jpg`);
-    await generatePlaceholderImage(fallbackPath, baseFileName);
-    return fallbackPath;
-  }
-};
-
-const convertDicomBuffer = async (buffer, options = {}) => {
+async function convertDicomToImage(buffer, options = {}) {
   if (!buffer || !Buffer.isBuffer(buffer)) {
     throw new Error('Uploaded file is missing or unreadable.');
   }
 
-  await ensureDicomCodecReady().catch((error) => {
-    logger.warn('Codec initialization skipped due to error', { error: error.message });
-  });
-
   const format = normalizeFormat(options.format);
-  const frameIndex = Number.isInteger(options.frame)
-    ? options.frame
-    : parseInt(options.frame || '0', 10) || 0;
-
+  const frameIndex = Number.isInteger(options.frame) ? options.frame : parseInt(options.frame || '0', 10) || 0;
   if (frameIndex < 0) {
     throw new Error('Frame index must be zero or positive.');
   }
@@ -143,6 +48,7 @@ const convertDicomBuffer = async (buffer, options = {}) => {
   }
 
   const meta = extractNaturalizedMetadata(arrayBuffer);
+
   const transferSyntax =
     dataSet.string('x00020010') ||
     meta.TransferSyntaxUID ||
@@ -160,7 +66,8 @@ const convertDicomBuffer = async (buffer, options = {}) => {
   const pixelRepresentation = dataSet.uint16('x00280103') || 0;
   const planarConfiguration = samplesPerPixel > 1 ? dataSet.uint16('x00280006') || 0 : 0;
   const numberOfFrames = dataSet.intString('x00280008') || 1;
-  const photometricInterpretation = (dataSet.string('x00280004') || 'MONOCHROME2').toUpperCase();
+  const photometricInterpretation =
+    (dataSet.string('x00280004') || 'MONOCHROME2').toUpperCase();
   const rescaleSlope = getNumericValue(dataSet, 'x00281053') ?? 1;
   const rescaleIntercept = getNumericValue(dataSet, 'x00281052') ?? 0;
   const windowCenter = getNumericValue(dataSet, 'x00281050');
@@ -181,9 +88,7 @@ const convertDicomBuffer = async (buffer, options = {}) => {
     bitsAllocated,
     bitsStored,
     samplesPerPixel,
-    signed: pixelRepresentation === 1,
-    planarConfiguration,
-    pixelRepresentation
+    signed: pixelRepresentation === 1
   };
 
   const {
@@ -237,7 +142,7 @@ const convertDicomBuffer = async (buffer, options = {}) => {
       format
     }
   };
-};
+}
 
 function normalizeFormat(inputFormat) {
   const requested = (inputFormat || 'png').toLowerCase();
@@ -297,11 +202,7 @@ async function decodePixelData({
     }
 
     const guess = guessTransferSyntaxFromFrame(frame);
-    const fallback = await decodeWithFallbackCodecs(frame, pixelInfo, [
-      transferSyntax,
-      guess,
-      ...KNOWN_COMPRESSED_SYNTAXES
-    ]);
+    const fallback = await decodeWithFallbackCodecs(frame, pixelInfo, [transferSyntax, guess, ...KNOWN_COMPRESSED_SYNTAXES]);
     if (fallback) {
       return fallback;
     }
@@ -386,7 +287,7 @@ async function decodeWithFallbackCodecs(frame, pixelInfo, candidates = []) {
     }
   }
   if (lastError) {
-    logger.warn('Codec fallback failed', { error: lastError.message });
+    console.error('[dicomConverter] codec fallback failed', lastError);
   }
   return null;
 }
@@ -605,40 +506,6 @@ function applyWindowLevel(pixelData, center, width) {
 }
 
 async function encodeImage(pixelBytes, { width, height, samplesPerPixel, format }) {
-  const channels = samplesPerPixel === 1 ? 1 : 3;
-  try {
-    const pipeline = sharp(Buffer.from(pixelBytes), {
-      raw: {
-        width,
-        height,
-        channels
-      }
-    });
-
-    if (channels === 1) {
-      pipeline.toColourspace('b-w');
-    }
-
-    if (format === 'png') {
-      const buffer = await pipeline.png({ compressionLevel: 6 }).toBuffer();
-      return {
-        buffer,
-        contentType: 'image/png'
-      };
-    }
-
-    const buffer = await pipeline.jpeg({ quality: 90 }).toBuffer();
-    return {
-      buffer,
-      contentType: 'image/jpeg'
-    };
-  } catch (error) {
-    logger.warn('Sharp encoding failed, falling back to JS codecs', { error: error.message });
-    return encodeImageFallback(pixelBytes, { width, height, samplesPerPixel, format });
-  }
-}
-
-async function encodeImageFallback(pixelBytes, { width, height, samplesPerPixel, format }) {
   if (format === 'png') {
     const png = new PNG({
       width,
@@ -740,180 +607,6 @@ function getNumericValue(dataSet, tag) {
   return Number.isFinite(num) ? num : undefined;
 }
 
-async function generatePlaceholderImage(outputPath, baseFileName) {
-  const placeholderSvg = `
-    <svg width="512" height="512" xmlns="http://www.w3.org/2000/svg">
-      <defs>
-        <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-          <stop offset="0%" stop-color="#0f172a"/>
-          <stop offset="100%" stop-color="#1e293b"/>
-        </linearGradient>
-      </defs>
-      <rect width="100%" height="100%" fill="url(#bg)"/>
-      <text x="50%" y="42%" text-anchor="middle" fill="#e2e8f0" font-family="Arial" font-size="22" font-weight="bold">
-        DICOM PREVIEW UNAVAILABLE
-      </text>
-      <text x="50%" y="56%" text-anchor="middle" fill="#94a3b8" font-family="Arial" font-size="14">
-        ${baseFileName.substring(0, 28)}${baseFileName.length > 28 ? '…' : ''}
-      </text>
-      <text x="50%" y="68%" text-anchor="middle" fill="#64748b" font-family="Arial" font-size="12">
-        Original study retained for diagnostic viewing
-      </text>
-    </svg>
-  `;
-
-  await sharp(Buffer.from(placeholderSvg))
-    .resize(512, 512, { fit: 'cover' })
-    .jpeg({ quality: 85 })
-    .toFile(outputPath);
-
-  logger.info(`DICOM placeholder JPEG created: ${outputPath}`);
-}
-
-const getDicomMetadata = async (dicomPath) => {
-  try {
-    const stats = fs.statSync(dicomPath);
-
-    try {
-      const dicomBuffer = fs.readFileSync(dicomPath);
-      const dataSet = dcmjs.data.DicomMessage.readFile(dicomBuffer);
-      const dataset = dcmjs.data.DicomMetaDictionary.naturalizeDataset(dataSet.dict);
-
-      return {
-        patientId: dataset.PatientID || 'ANON',
-        patientName: dataset.PatientName?.Alphabetic || 'Anonymous',
-        studyDate: dataset.StudyDate || new Date().toISOString().split('T')[0].replace(/-/g, ''),
-        studyTime: dataset.StudyTime || '',
-        modality: dataset.Modality || 'OT',
-        studyDescription: dataset.StudyDescription || 'DICOM Study',
-        seriesDescription: dataset.SeriesDescription || '',
-        institutionName: dataset.InstitutionName || '',
-        manufacturer: dataset.Manufacturer || '',
-        rows: dataset.Rows || 0,
-        columns: dataset.Columns || 0,
-        imageSize: stats.size,
-        sopInstanceUID: dataset.SOPInstanceUID || `1.2.276.0.7230010.3.1.4.${Date.now()}`,
-        studyInstanceUID: dataset.StudyInstanceUID || `1.2.276.0.7230010.3.1.2.${Date.now()}`,
-        seriesInstanceUID: dataset.SeriesInstanceUID || `1.2.276.0.7230010.3.1.3.${Date.now()}`,
-        bitsAllocated: dataset.BitsAllocated || 0,
-        bitsStored: dataset.BitsStored || 0,
-        pixelRepresentation: dataset.PixelRepresentation || 0,
-        samplesPerPixel: dataset.SamplesPerPixel || 1
-      };
-    } catch (dicomError) {
-      logger.warn(`DICOM metadata parsing failed: ${dicomError.message}`);
-      return {
-        patientId: 'ANON',
-        patientName: 'Anonymous',
-        studyDate: new Date().toISOString().split('T')[0].replace(/-/g, ''),
-        studyTime: '',
-        modality: 'OT',
-        studyDescription: 'DICOM Study',
-        seriesDescription: 'Uploaded DICOM',
-        institutionName: '',
-        manufacturer: '',
-        rows: 0,
-        columns: 0,
-        imageSize: stats.size,
-        sopInstanceUID: `1.2.276.0.7230010.3.1.4.${Date.now()}`,
-        studyInstanceUID: `1.2.276.0.7230010.3.1.2.${Date.now()}`,
-        seriesInstanceUID: `1.2.276.0.7230010.3.1.3.${Date.now()}`,
-        bitsAllocated: 0,
-        bitsStored: 0,
-        pixelRepresentation: 0,
-        samplesPerPixel: 1
-      };
-    }
-  } catch (error) {
-    logger.error('DICOM metadata extraction completely failed:', error);
-    return {
-      patientId: 'UNKNOWN',
-      patientName: 'Unknown',
-      studyDate: new Date().toISOString().split('T')[0].replace(/-/g, ''),
-      studyTime: '',
-      modality: 'OT',
-      studyDescription: 'DICOM Study',
-      seriesDescription: '',
-      institutionName: '',
-      manufacturer: '',
-      rows: 0,
-      columns: 0,
-      imageSize: 0,
-      sopInstanceUID: `1.2.276.0.7230010.3.1.4.${Date.now()}`,
-      studyInstanceUID: `1.2.276.0.7230010.3.1.2.${Date.now()}`,
-      seriesInstanceUID: `1.2.276.0.7230010.3.1.3.${Date.now()}`,
-      bitsAllocated: 0,
-      bitsStored: 0,
-      pixelRepresentation: 0,
-      samplesPerPixel: 1
-    };
-  }
-};
-
-const detectDicomFile = async (filePath, { extension, mimeType } = {}) => {
-  const normalizedExt = (extension || '').toLowerCase();
-  const normalizedMime = (mimeType || '').toLowerCase();
-
-  if (isLikelyDicomExtension(normalizedExt) || isDicomMimeType(normalizedMime)) {
-    return true;
-  }
-
-  try {
-    const handle = await fsp.open(filePath, 'r');
-    try {
-      const stats = await handle.stat();
-      if (stats.size === 0) {
-        return false;
-      }
-      const probeLength = Math.min(stats.size, MAX_PROBE_BYTES);
-      const probeBuffer = Buffer.alloc(probeLength);
-      await handle.read(probeBuffer, 0, probeLength, 0);
-
-      if (probeLength >= DICOM_PREAMBLE_OFFSET + 4) {
-        const prefix = probeBuffer.slice(DICOM_PREAMBLE_OFFSET, DICOM_PREAMBLE_OFFSET + 4).toString();
-        if (prefix === DICOM_PREFIX) {
-          return true;
-        }
-      }
-
-      try {
-        dicomParser.parseDicom(probeBuffer);
-        return true;
-      } catch (partialError) {
-        if (stats.size <= MAX_FULL_PARSE_BYTES) {
-          const fullBuffer = await fsp.readFile(filePath);
-          try {
-            dicomParser.parseDicom(fullBuffer);
-            return true;
-          } catch (fullParseError) {
-            logger.debug?.('Full DICOM parse failed during detection', { filePath, error: fullParseError.message });
-          }
-        }
-      }
-    } finally {
-      await handle.close();
-    }
-  } catch (error) {
-    logger.warn('Failed to probe file for DICOM signature', { filePath, error: error.message });
-  }
-
-  return false;
-};
-
-const isDicomMimeType = (mimeType = '') => {
-  const normalized = mimeType.toLowerCase();
-  return DICOM_MIME_TYPES.has(normalized);
-};
-
-const isLikelyDicomExtension = (extension = '') => {
-  const normalized = extension.toLowerCase();
-  return KNOWN_DICOM_EXTENSIONS.has(normalized);
-};
-
 module.exports = {
-  convertDicomToImage,
-  getDicomMetadata,
-  detectDicomFile,
-  isDicomMimeType,
-  isLikelyDicomExtension
+  convertDicomToImage
 };

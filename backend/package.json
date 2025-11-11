@@ -34,7 +34,10 @@
     "connect-redis": "^7.1.0",
     "dcmjs": "^0.29.9",
     "sharp": "^0.32.6",
-    "dicom-parser": "^1.8.17"
+    "dicom-parser": "^1.8.17",
+    "@cornerstonejs/dicom-codec": "^1.0.9",
+    "pngjs": "^7.0.0",
+    "jpeg-js": "^0.4.4"
   },
   "devDependencies": {
     "nodemon": "^3.0.2",

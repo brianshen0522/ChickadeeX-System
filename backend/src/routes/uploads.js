@@ -10,7 +10,13 @@ const { getDB } = require('../database/connection');
 const { logger } = require('../utils/logger');
 const { createAuditLog } = require('../utils/audit');
 const { generateAIReport } = require('../services/llm');
-const { convertDicomToImage, getDicomMetadata } = require('../utils/dicomConverter');
+const {
+    convertDicomToImage,
+    getDicomMetadata,
+    detectDicomFile,
+    isDicomMimeType,
+    isLikelyDicomExtension
+} = require('../utils/dicomConverter');
 
 const router = express.Router();
 
@@ -20,8 +26,14 @@ if (!fs.existsSync(UPLOAD_ROOT)) {
     fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
 }
 
-const ALLOWED_EXTENSIONS = new Set(['.dcm', '.dicom', '.jpg', '.jpeg', '.png', '.webp']);
+const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 const IMAGE_MIME_PREFIX = 'image/';
+const EXTENSION_TO_MIME = new Map([
+    ['.jpg', 'image/jpeg'],
+    ['.jpeg', 'image/jpeg'],
+    ['.png', 'image/png'],
+    ['.webp', 'image/webp']
+]);
 let uploadsTableInitPromise = null;
 
 const ensureUploadsTable = async () => {
@@ -87,13 +99,16 @@ const storage = multer.diskStorage({
 
 const fileFilter = (_req, file, cb) => {
     const ext = path.extname(file.originalname || '').toLowerCase();
-    if (ALLOWED_EXTENSIONS.has(ext)) {
+    if (ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
         return cb(null, true);
     }
     if (file.mimetype && file.mimetype.startsWith(IMAGE_MIME_PREFIX)) {
         return cb(null, true);
     }
-    const error = new Error('Unsupported file type. Upload DICOM (.dcm) or image files (JPEG, PNG, WebP).');
+    if (isLikelyDicomExtension(ext) || isDicomMimeType(file.mimetype) || (!ext && file.mimetype === 'application/octet-stream')) {
+        return cb(null, true);
+    }
+    const error = new Error('Unsupported file type. Upload DICOM or image files (JPEG, PNG, WebP).');
     error.status = 400;
     cb(error);
 };
@@ -263,9 +278,30 @@ router.post('/', upload.single('file'), async (req, res) => {
     const db = getDB();
     const uploadId = uuidv4();
     const ext = path.extname(req.file.originalname || '').toLowerCase();
-    const mimeType = req.file.mimetype || (ext === '.dcm' || ext === '.dicom' ? 'application/dicom' : 'application/octet-stream');
+    const normalizedMimeType = (req.file.mimetype || '').toLowerCase();
     const storedRelativePath = path.relative(UPLOAD_ROOT, path.join(req.file.destination, req.file.filename));
-    const isDicom = ext === '.dcm' || ext === '.dicom' || mimeType === 'application/dicom';
+    const absoluteUploadPath = path.join(req.file.destination, req.file.filename);
+    const looksLikeImage = ALLOWED_IMAGE_EXTENSIONS.has(ext) || (normalizedMimeType && normalizedMimeType.startsWith(IMAGE_MIME_PREFIX));
+
+    let isDicom = false;
+    try {
+        isDicom = await detectDicomFile(absoluteUploadPath, { extension: ext, mimeType: normalizedMimeType });
+    } catch (probeError) {
+        logger.warn('Failed to inspect uploaded file for DICOM signature', { error: probeError.message });
+    }
+
+    if (!isDicom && !looksLikeImage) {
+        await fsp.unlink(absoluteUploadPath).catch((unlinkErr) => {
+            if (unlinkErr?.code !== 'ENOENT') {
+                logger.warn('Failed to remove rejected upload', { error: unlinkErr.message });
+            }
+        });
+        return res.status(400).json({ error: 'Unsupported file type. Provide DICOM studies or image files (JPEG, PNG, WebP).' });
+    }
+
+    const mimeType = isDicom
+        ? 'application/dicom'
+        : (normalizedMimeType || EXTENSION_TO_MIME.get(ext) || 'application/octet-stream');
 
     let convertedImagePath = null;
     let dicomMetadata = null;
@@ -275,12 +311,11 @@ router.post('/', upload.single('file'), async (req, res) => {
         // Handle DICOM conversion
         if (isDicom) {
             try {
-                const fullFilePath = path.join(req.file.destination, req.file.filename);
                 const outputDir = req.file.destination;
                 const baseFileName = path.parse(req.file.filename).name;
 
-                convertedImagePath = await convertDicomToImage(fullFilePath, outputDir, baseFileName);
-                dicomMetadata = await getDicomMetadata(fullFilePath);
+                convertedImagePath = await convertDicomToImage(absoluteUploadPath, outputDir, baseFileName);
+                dicomMetadata = await getDicomMetadata(absoluteUploadPath);
 
                 // Store relative path for converted image
                 convertedImagePath = path.relative(UPLOAD_ROOT, convertedImagePath);
@@ -293,11 +328,13 @@ router.post('/', upload.single('file'), async (req, res) => {
         }
 
         const resolvedMetadata = dicomMetadata ? JSON.stringify(dicomMetadata) : null;
-        studyInstanceUID = resolveStudyInstanceUID({
-            uploadId,
-            dicomMetadata,
-            storedValue: null
-        });
+        studyInstanceUID = isDicom
+            ? resolveStudyInstanceUID({
+                uploadId,
+                dicomMetadata,
+                storedValue: null
+            })
+            : null;
 
         let insertedRow;
         try {
