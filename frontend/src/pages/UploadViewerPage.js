@@ -94,18 +94,7 @@ const UploadViewerPage = () => {
   const [isDeletingUpload, setIsDeletingUpload] = useState(false);
   const savedIndicatorTimer = useRef(null);
   const [isMetadataSaving, setIsMetadataSaving] = useState(false);
-  const viewerContainerRef = useRef(null);
-  const reportContainerRef = useRef(null);
-  const [isWideLayout, setIsWideLayout] = useState(false);
   const [viewerLoading, setViewerLoading] = useState(false);
-  const viewerFlexStyle = useMemo(() => {
-    if (!isWideLayout) return undefined;
-    return { flexBasis: '70%', maxWidth: '70%' };
-  }, [isWideLayout]);
-  const reportFlexStyle = useMemo(() => {
-    if (!isWideLayout) return undefined;
-    return { flexBasis: '30%', maxWidth: '30%' };
-  }, [isWideLayout]);
 
   // Drag and drop state
   const [isDragOver, setIsDragOver] = useState(false);
@@ -285,67 +274,6 @@ const UploadViewerPage = () => {
       { label: 'Demo', href: undefined, isCurrent: true }
     ]);
   }, [setPageTitle, setPageDescription, setBreadcrumbs]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const query = window.matchMedia('(min-width: 1280px)');
-    const handleChange = (event) => setIsWideLayout(event.matches);
-    setIsWideLayout(query.matches);
-    query.addEventListener('change', handleChange);
-    return () => {
-      query.removeEventListener('change', handleChange);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (!isWideLayout) {
-      if (viewerContainerRef.current) {
-        viewerContainerRef.current.style.removeProperty('height');
-        viewerContainerRef.current.style.removeProperty('min-height');
-      }
-      return;
-    }
-
-    if (
-      typeof ResizeObserver === 'undefined' ||
-      !reportContainerRef.current ||
-      !viewerContainerRef.current
-    ) {
-      return;
-    }
-
-    const viewerEl = viewerContainerRef.current;
-
-    const updateViewerHeight = () => {
-      const rect = reportContainerRef.current.getBoundingClientRect();
-      if (!rect || !Number.isFinite(rect.height)) return;
-  viewerEl.style.height = `${rect.height}px`;
-  viewerEl.style.minHeight = `${rect.height}px`;
-    };
-
-    updateViewerHeight();
-
-    const observer = new ResizeObserver(() => {
-      updateViewerHeight();
-    });
-
-    observer.observe(reportContainerRef.current);
-
-    const handleWindowResize = () => {
-      updateViewerHeight();
-    };
-
-    window.addEventListener('resize', handleWindowResize);
-
-    return () => {
-      observer.disconnect();
-      window.removeEventListener('resize', handleWindowResize);
-      if (viewerEl) {
-        viewerEl.style.removeProperty('height');
-        viewerEl.style.removeProperty('min-height');
-      }
-    };
-  }, [isWideLayout]);
 
   const refreshUploads = useCallback(async (opts = {}) => {
     setIsLoadingUploads(true);
@@ -1413,8 +1341,8 @@ const UploadViewerPage = () => {
           <div className="min-h-[120px] flex-shrink-0 rounded-2xl border border-slate-200 bg-white px-6 py-3 shadow-medical">
             {hasSavedDraft && selectedUpload ? (
               <div className="space-y-3">
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-center">
-                  <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
+                  <div className="flex-1 min-w-[260px] space-y-3">
                     <div className="min-w-0">
                       <label htmlFor="study-title" className="sr-only">Study Title</label>
                       <input
@@ -1452,7 +1380,7 @@ const UploadViewerPage = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-2 xl:ml-auto xl:w-[220px]">
+                  <div className="flex w-full flex-col gap-2 md:w-[240px]">
                     {renderUploadsDropdown({ fullWidth: true })}
                     <button
                       type="button"
@@ -1473,8 +1401,8 @@ const UploadViewerPage = () => {
               </div>
             ) : (
               <div className="space-y-3">
-                <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_220px] xl:items-center">
-                  <div className="flex flex-col gap-3">
+                <div className="flex flex-col gap-4 md:flex-row md:items-start md:gap-6">
+                  <div className="flex-1 min-w-[260px] space-y-3">
                     <div className="min-w-0">
                       <label htmlFor="study-title-new" className="sr-only">Study Title</label>
                       <input
@@ -1512,7 +1440,7 @@ const UploadViewerPage = () => {
                       </div>
                     </div>
                   </div>
-                  <div className="flex flex-col gap-2 xl:ml-auto xl:w-[220px]">
+                  <div className="flex w-full flex-col gap-2 md:w-[240px]">
                     {renderUploadsDropdown({ fullWidth: true })}
                     <button
                       type="button"
@@ -1534,19 +1462,11 @@ const UploadViewerPage = () => {
             )}
           </div>
 
-          <div className="mt-1 flex-1 min-h-0 flex flex-col xl:flex-row gap-3">
-            <div
-              ref={viewerContainerRef}
-              className="flex-1 min-h-[320px] xl:min-h-0 flex items-stretch"
-              style={viewerFlexStyle}
-            >
+          <div className="mt-1 grid flex-1 min-h-0 gap-3 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+            <div className="flex min-h-[360px] items-stretch">
               {renderViewer()}
             </div>
-            <div
-              ref={reportContainerRef}
-              className="flex-1 min-h-[320px] xl:min-h-0 flex items-stretch"
-              style={reportFlexStyle}
-            >
+            <div className="flex min-h-[360px] items-stretch">
               {renderReportPanel()}
             </div>
           </div>
