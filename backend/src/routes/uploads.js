@@ -97,21 +97,7 @@ const storage = multer.diskStorage({
     }
 });
 
-const fileFilter = (_req, file, cb) => {
-    const ext = path.extname(file.originalname || '').toLowerCase();
-    if (ALLOWED_IMAGE_EXTENSIONS.has(ext)) {
-        return cb(null, true);
-    }
-    if (file.mimetype && file.mimetype.startsWith(IMAGE_MIME_PREFIX)) {
-        return cb(null, true);
-    }
-    if (isLikelyDicomExtension(ext) || isDicomMimeType(file.mimetype) || (!ext && file.mimetype === 'application/octet-stream')) {
-        return cb(null, true);
-    }
-    const error = new Error('Unsupported file type. Upload DICOM or image files (JPEG, PNG, WebP).');
-    error.status = 400;
-    cb(error);
-};
+const fileFilter = (_req, _file, cb) => cb(null, true);
 
 const upload = multer({
     storage,

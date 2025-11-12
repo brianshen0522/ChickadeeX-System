@@ -472,18 +472,6 @@ const UploadViewerPage = () => {
       return;
     }
 
-    const allowedTypes = ['.jpg', '.jpeg', '.png', '.webp', '.dcm', '.dicom'];
-    const invalidFiles = files.filter((file) => {
-      const extension = `.${file.name.toLowerCase().split('.').pop()}`;
-      return !allowedTypes.includes(extension);
-    });
-
-    if (invalidFiles.length) {
-      const names = invalidFiles.map((file) => file.name).join(', ');
-      toast.error(`Invalid file type(s): ${names}`);
-      return;
-    }
-
     setIsUploading(true);
     let successCount = 0;
     let failureCount = 0;
@@ -938,7 +926,6 @@ const UploadViewerPage = () => {
               Upload
               <input
                 type="file"
-                accept=".jpg,.jpeg,.png,.webp,.dcm,.dicom"
                 onChange={handleUpload}
                 disabled={isUploading}
                 className="sr-only"
@@ -1273,7 +1260,6 @@ const UploadViewerPage = () => {
                 <span>Choose Image to Upload</span>
                 <input
                   type="file"
-                  accept=".jpg,.jpeg,.png,.webp,.dcm,.dicom"
                   onChange={handleUpload}
                   disabled={isUploading}
                   className="sr-only"
@@ -1285,19 +1271,11 @@ const UploadViewerPage = () => {
             <div className="flex flex-wrap justify-center gap-3 text-sm text-slate-500">
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                <span>JPG</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                <span>PNG</span>
-              </div>
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
-                <span>WebP</span>
+                <span>JPEG / PNG / WebP</span>
               </div>
               <div className="flex items-center gap-1.5">
                 <div className="w-2 h-2 bg-orange-500 rounded-full"></div>
-                <span>DICOM</span>
+                <span>All DICOM variants</span>
               </div>
             </div>
 
@@ -1553,7 +1531,7 @@ const UploadViewerPage = () => {
             </p>
             <div className="mt-4 flex items-center gap-2 text-blue-200">
               <div className="w-2 h-2 bg-white rounded-full animate-pulse"></div>
-              <span className="text-sm">JPG, PNG, WebP, DICOM supported</span>
+              <span className="text-sm">JPEG, PNG, WebP, and all DICOM syntaxes supported</span>
             </div>
           </div>
         </div>
