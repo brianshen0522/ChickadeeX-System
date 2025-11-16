@@ -28,7 +28,7 @@ const Header = () => {
 
   const role = (user?.role || '').toLowerCase();
   const pacsColors = getStatusColors(pacsHealth);
-  const shouldShowPacs = role !== 'observer';
+  const shouldShowPacs = role === 'admin';
   
   return (
     <div className="relative z-10 flex-shrink-0 flex h-16 bg-gradient-to-r from-primary-50 to-medical-off-white shadow-medical border-b border-primary-200">

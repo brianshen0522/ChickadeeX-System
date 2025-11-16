@@ -8,7 +8,7 @@ const { getDB } = require('../database/connection');
 const router = express.Router();
 
 router.use(authenticateToken);
-router.use(requireAnyRole(['doctor']));
+router.use(requireAnyRole(['doctor', 'admin']));
 
 // GET /api/dicom/base-url - expose configured PACS base and studies endpoint
 router.get('/base-url', async (req, res) => {
@@ -430,9 +430,10 @@ router.get('/health', async (req, res) => {
       });
     }
 
-    const { pacs_url: baseUrl, auth_type, credentials, connection_timeout = 5000 } = cfg.rows[0];
+    const { pacs_url: baseUrl, auth_type, credentials, connection_timeout = 5 } = cfg.rows[0];
     const pacsUrl = String(baseUrl || '').replace(/\/*$/, '');
     const studiesEndpoint = /\/studies$/i.test(pacsUrl) ? pacsUrl : `${pacsUrl}/studies`;
+    const timeoutMs = Math.min(60000, Math.max(1000, Number(connection_timeout) * 1000 || 5000));
 
     // Prepare auth headers
     let headers = {
@@ -440,12 +441,11 @@ router.get('/health', async (req, res) => {
       'Content-Type': 'application/dicom+json'
     };
 
-    if (auth_type === 'basic' && credentials) {
-      const creds = JSON.parse(credentials);
-      const auth = Buffer.from(`${creds.username}:${creds.password}`).toString('base64');
+    const creds = normalizeCredentials(credentials);
+    if (auth_type === 'basic' && creds?.username) {
+      const auth = Buffer.from(`${creds.username}:${creds.password || ''}`).toString('base64');
       headers['Authorization'] = `Basic ${auth}`;
-    } else if (auth_type === 'bearer' && credentials) {
-      const creds = JSON.parse(credentials);
+    } else if ((auth_type === 'token' || auth_type === 'bearer') && creds?.token) {
       headers['Authorization'] = `Bearer ${creds.token}`;
     }
 
@@ -455,22 +455,43 @@ router.get('/health', async (req, res) => {
     const startTime = Date.now();
     const response = await axios.get(healthCheckUrl, {
       headers,
-      timeout: connection_timeout,
+      timeout: timeoutMs,
       validateStatus: (status) => status < 500 // Accept 2xx, 3xx, 4xx but not 5xx
     });
     const responseTime = Date.now() - startTime;
 
-    // PACS is healthy if we get a response (even if empty or auth error)
-    const isHealthy = response.status < 500;
-    
-    logger.info(`PACS health check: ${response.status} in ${responseTime}ms`);
-    
+    let isHealthy = false;
+    let message = '';
+    const { status } = response;
+
+    if (status >= 200 && status < 300) {
+      const sampleCount = Array.isArray(response.data) ? response.data.length : 0;
+      isHealthy = true;
+      message = sampleCount > 0
+        ? `PACS responding (${sampleCount} sample study${sampleCount === 1 ? '' : 'ies'})`
+        : 'PACS responding';
+    } else if (status === 204) {  
+      isHealthy = true;
+      message = 'PACS reachable (no studies)';
+    } else if (status === 401 || status === 403) {
+      // Reachable but requires authentication
+      isHealthy = true;
+      message = 'PACS reachable (authentication required)';
+    } else if (status === 404) {
+      isHealthy = true;
+      message = 'PACS reachable (endpoint returned 404)';
+    } else {
+      message = `Unexpected PACS status ${status}`;
+    }
+
+    logger.info(`PACS health check: ${status} in ${responseTime}ms`);
+
     return res.json({
-      status: 'online',
+      status: isHealthy ? 'online' : 'degraded',
       healthy: isHealthy,
       responseTime,
-      httpStatus: response.status,
-      message: isHealthy ? 'PACS responding' : 'PACS server error'
+      httpStatus: status,
+      message
     });
 
   } catch (error) {

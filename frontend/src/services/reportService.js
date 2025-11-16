@@ -63,7 +63,7 @@ export const exportReport = async (reportId, format = 'json') => {
   return response.data;
 };
 
-export const getReportsStats = async () => {
+export const getReportsStats = async (params = {}) => {
   try {
     // Fetch all reports by paginating through them
     let allReports = [];
@@ -72,10 +72,11 @@ export const getReportsStats = async () => {
     let hasMore = true;
 
     while (hasMore) {
-      const response = await api.get('/reports', { 
-        params: { 
+      const response = await api.get('/reports', {
+        params: {
+          ...params,
           limit,
-          offset 
+          offset
         }
       });
       

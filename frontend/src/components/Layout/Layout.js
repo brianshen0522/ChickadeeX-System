@@ -140,6 +140,7 @@ const Layout = ({ children }) => {
 
   const isAdmin = user?.role === 'admin';
   const isObserver = user?.role === 'observer';
+  const showPacsStatus = user?.role === 'admin';
 
   useEffect(() => {
     const handleClickAway = (event) => {
@@ -164,10 +165,10 @@ const Layout = ({ children }) => {
   }, [location.pathname, location.search]);
 
   useEffect(() => {
-    if (isObserver) {
+    if (!showPacsStatus) {
       setStatusMenuOpen(false);
     }
-  }, [isObserver]);
+  }, [showPacsStatus]);
 
   const mainOffset = isCollapsed ? 'md:ml-20' : 'md:ml-60';
   const layoutBackground = isAdmin ? 'bg-neutral-50' : 'bg-slate-100';
@@ -330,7 +331,7 @@ const Layout = ({ children }) => {
                     <ChevronRight className="h-4 w-4" />
                   </Link>
                 )}
-                {!isObserver && (
+                {showPacsStatus && (
                   <div ref={desktopStatusRef} className="relative">
                     <button
                       type="button"
@@ -439,8 +440,8 @@ const Layout = ({ children }) => {
                   <ChevronRight className="h-4 w-4" />
                 </Link>
               )}
-              {!isObserver && (
-                <div ref={mobileStatusRef} className="relative">
+                {showPacsStatus && (
+                  <div ref={mobileStatusRef} className="relative">
                   <button
                     type="button"
                     onClick={() => setStatusMenuOpen((prev) => !prev)}

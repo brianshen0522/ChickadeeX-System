@@ -5,7 +5,6 @@ import { usePageContext } from '../contexts/PageContext';
 import {
   FileText,
   FolderOpen,
-  Activity,
   Users,
   Cpu,
   Database,
@@ -21,7 +20,7 @@ import {
 } from 'lucide-react';
 import { getStatistics, getUserStats } from '../services/adminService';
 import { getReportsStats } from '../services/reportService';
-import { getStudiesStats } from '../services/dicomService';
+import { useHealthStatus } from '../hooks/useHealthStatus';
 
 const DashboardPage = () => {
   const { user } = useAuth();
@@ -29,6 +28,7 @@ const DashboardPage = () => {
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [adminMetrics, setAdminMetrics] = useState(null);
   const [doctorMetrics, setDoctorMetrics] = useState(null);
+  const { pacsHealth } = useHealthStatus();
 
   useEffect(() => {
     setPageTitle('Home');
@@ -39,6 +39,7 @@ const DashboardPage = () => {
   }, [setPageDescription, setPageTitle, setBreadcrumbs]);
 
   const role = user?.role;
+  const doctorId = user?.id;
   const shouldShowMetrics = role === 'admin' || role === 'doctor';
 
   useEffect(() => {
@@ -64,12 +65,16 @@ const DashboardPage = () => {
             setDoctorMetrics(null);
           }
         } else if (role === 'doctor') {
-          const [reportStats, studiesStats] = await Promise.all([
-            getReportsStats(),
-            getStudiesStats()
-          ]);
+          if (!doctorId) {
+            if (isMounted) {
+              setDoctorMetrics(null);
+              setLoadingMetrics(false);
+            }
+            return;
+          }
+          const reportStats = await getReportsStats({ doctor_id: doctorId });
           if (isMounted) {
-            setDoctorMetrics({ reportStats, studiesStats });
+            setDoctorMetrics({ reportStats });
             setAdminMetrics(null);
           }
         }
@@ -90,7 +95,7 @@ const DashboardPage = () => {
     return () => {
       isMounted = false;
     };
-  }, [role]);
+  }, [role, doctorId]);
 
   const formatNumber = (value) => {
     if (value === null || value === undefined) return '—';
@@ -119,7 +124,7 @@ const DashboardPage = () => {
       });
       cards.push({
         title: 'Finalized Reports',
-        value: formatNumber(stats.finalized_reports),
+        value: formatNumber(stats.finalizedReports),
         icon: CheckCircle,
         surface: 'border-success-100 bg-success-50',
         iconColor: 'text-success-600'
@@ -138,72 +143,95 @@ const DashboardPage = () => {
     }
 
     if (role === 'doctor' && doctorMetrics?.reportStats) {
+      const stats = doctorMetrics.reportStats;
       cards.push({
-        title: 'Finalized This Week',
-        value: formatNumber(doctorMetrics.reportStats.finalized_reports),
-        icon: CheckCircle,
+        title: 'Total Reports',
+        value: formatNumber(stats.totalReports),
+        icon: FileText,
         surface: 'border-primary-100 bg-primary-50',
         iconColor: 'text-primary-600'
       });
       cards.push({
-        title: 'Draft Queue',
-        value: formatNumber(doctorMetrics.reportStats.draft_reports),
+        title: 'Finalized',
+        value: formatNumber(stats.finalizedReports),
+        icon: CheckCircle,
+        surface: 'border-success-100 bg-success-50',
+        iconColor: 'text-success-600'
+      });
+      cards.push({
+        title: 'Drafts',
+        value: formatNumber(stats.draftReports),
         icon: Clock,
         surface: 'border-warning-100 bg-warning-50',
         iconColor: 'text-warning-600'
       });
+      const pacsStatus =
+        pacsHealth.status === 'checking'
+          ? 'checking'
+          : pacsHealth.healthy
+            ? 'online'
+            : 'offline';
+      const pacsSurface =
+        pacsStatus === 'online'
+          ? 'border-success-100 bg-success-50'
+          : pacsStatus === 'checking'
+            ? 'border-slate-200 bg-white'
+            : 'border-error-100 bg-error-50';
+      const pacsIconColor =
+        pacsStatus === 'online'
+          ? 'text-success-600'
+          : pacsStatus === 'checking'
+            ? 'text-slate-400'
+            : 'text-error-600';
       cards.push({
-        title: 'Studies Viewed',
-        value: formatNumber(
-          doctorMetrics.studiesStats?.totalStudiesViewed ??
-            doctorMetrics.studiesStats?.totalStudies
-        ),
-        icon: Activity,
-        surface: 'border-success-100 bg-success-50',
-        iconColor: 'text-success-600'
+        title: 'PACS Health',
+        value:
+          pacsStatus === 'checking'
+            ? 'Checking…'
+            : pacsHealth.healthy
+              ? 'Online'
+              : 'Offline',
+        icon: Database,
+        surface: pacsSurface,
+        iconColor: pacsIconColor,
+        breakdown: [
+          {
+            label: 'Status',
+            value: pacsHealth.message || '—'
+          },
+          ...(pacsHealth.responseTime
+            ? [{ label: 'Latency', value: `${pacsHealth.responseTime}ms` }]
+            : [])
+        ]
       });
     }
 
     return cards;
-  }, [adminMetrics, doctorMetrics, role]);
+  }, [adminMetrics, doctorMetrics, role, pacsHealth]);
 
   const skeletonCount = metricCards.length || (shouldShowMetrics ? 3 : 0);
 
   const sections = useMemo(() => {
-    // Original layout for other roles
     const baseSections = [
       {
         title: 'Clinical Operations',
         items: [
           {
-            name: 'Reports Workspace',
-            description: 'Review drafts, finalize studies, and export signed reports.',
+            name: 'Reports',
+            description: 'Review reports.',
             icon: FileText,
             to: '/reports',
             cta: 'Open Reports',
             roles: ['admin', 'doctor', 'researcher']
           },
           {
-            name: 'Studies Explorer',
-            description: 'Search PACS studies with modality and date filters.',
+            name: 'Studies',
+            description: 'Search PACS studies.',
             icon: FolderOpen,
             to: '/studies',
             cta: 'Browse Studies',
             roles: ['doctor']
           },
-        ]
-      },
-      {
-        title: 'Intelligence & Assistance',
-        items: [
-          {
-            name: 'AI Drafting',
-            description: 'Generate report previews with the configured language model.',
-            icon: Sparkles,
-            to: '/reports',
-            cta: 'Generate Draft',
-            roles: ['admin', 'doctor']
-          }
         ]
       },
       {
@@ -248,18 +276,10 @@ const DashboardPage = () => {
         items: [
           {
             name: 'Profile & Preferences',
-            description: 'Update personal details, notification settings, and credentials.',
+            description: 'Update personal credentials.',
             icon: UserCircle,
             to: '/profile',
             cta: 'View Profile',
-            roles: ['admin', 'doctor', 'researcher']
-          },
-          {
-            name: 'Support & Feedback',
-            description: 'Raise issues or request enhancements for ChickadeeX.',
-            icon: Settings2,
-            to: '/profile',
-            cta: 'Contact Support',
             roles: ['admin', 'doctor', 'researcher']
           }
         ]

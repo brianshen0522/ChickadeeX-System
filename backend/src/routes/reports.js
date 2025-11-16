@@ -554,7 +554,7 @@ router.get('/summary',
             const role = req.user.role;
             const normalize = (value) => Number(value) || 0;
 
-            if (['admin', 'doctor'].includes(role)) {
+            if (role === 'admin') {
                 const summaryRes = await db.query(`
                     SELECT
                         COUNT(*)::int AS total_reports,
@@ -562,6 +562,23 @@ router.get('/summary',
                         COUNT(*) FILTER (WHERE finalized_at IS NOT NULL)::int AS finalized_reports
                     FROM reports
                 `);
+                const row = summaryRes.rows[0] || {};
+                return res.json({
+                    total_reports: normalize(row.total_reports),
+                    draft_reports: normalize(row.draft_reports),
+                    finalized_reports: normalize(row.finalized_reports)
+                });
+            }
+
+            if (role === 'doctor') {
+                const summaryRes = await db.query(`
+                    SELECT
+                        COUNT(*)::int AS total_reports,
+                        COUNT(*) FILTER (WHERE finalized_at IS NULL)::int AS draft_reports,
+                        COUNT(*) FILTER (WHERE finalized_at IS NOT NULL)::int AS finalized_reports
+                    FROM reports
+                    WHERE doctor_id = $1
+                `, [req.user.id]);
                 const row = summaryRes.rows[0] || {};
                 return res.json({
                     total_reports: normalize(row.total_reports),
