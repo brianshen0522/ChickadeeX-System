@@ -25,6 +25,11 @@ export const createReportVersion = async (reportId, versionData) => {
   return response.data;
 };
 
+export const updateReportDescription = async (reportId, payload) => {
+  const response = await api.put(`/reports/${reportId}/description`, payload);
+  return response.data;
+};
+
 export const updateLatestReportVersion = async (reportId, payload) => {
   const response = await api.put(`/reports/${reportId}/versions/latest`, payload);
   return response.data;

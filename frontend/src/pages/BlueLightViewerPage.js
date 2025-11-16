@@ -7,7 +7,8 @@ import {
   getReport,
   createReport,
   createReportVersion,
-  generateReportPreview
+  generateReportPreview,
+  updateReportDescription
 } from '../services/reportService';
 import { resolveBlueLightStartUrl } from '../utils/bluelight';
 import { AlertTriangle, Check, FileText, Loader2, Save, Sparkles, X } from 'lucide-react';
@@ -36,6 +37,22 @@ const BlueLightViewerPage = () => {
   const [isAiMode, setIsAiMode] = useState(false);
   const [viewerFrameKey, setViewerFrameKey] = useState(0);
   const [viewerLoading, setViewerLoading] = useState(false);
+  const [studyDescription, setStudyDescription] = useState('');
+  const [lastSavedDescription, setLastSavedDescription] = useState('');
+  const [descriptionDirty, setDescriptionDirty] = useState(false);
+  const [descriptionSaving, setDescriptionSaving] = useState(false);
+
+  const normalizedPatientName = useMemo(() => {
+    const raw = (patientNameFromQuery || '').trim();
+    if (!raw) return '';
+    const simplified = raw.replace(/\^/g, ' ').replace(/\s+/g, ' ').trim();
+    return simplified || raw;
+  }, [patientNameFromQuery]);
+
+  const normalizedPatientId = useMemo(() => {
+    const raw = (patientIdFromQuery || '').trim();
+    return raw || '';
+  }, [patientIdFromQuery]);
 
   const latestVersionNumber = useMemo(
     () => (versions.length ? versions[versions.length - 1].version_no : null),
@@ -52,9 +69,19 @@ const BlueLightViewerPage = () => {
       } else {
         setReportId(null);
       }
-      const full = rep ? await getReport(rep.id) : { versions: [] };
-      setReportData(full);
-      const vers = Array.isArray(full.versions) ? full.versions : [];
+      const fetched = rep ? await getReport(rep.id) : { versions: [] };
+      const hasCustomDescription = typeof fetched.study_description === 'string';
+      const normalizedDescription = hasCustomDescription
+        ? fetched.study_description
+        : normalizedPatientName
+          ? `${normalizedPatientName} study`
+          : 'BlueLight Draft';
+      const normalizedReport = { ...fetched, study_description: normalizedDescription };
+      setReportData(normalizedReport);
+      setStudyDescription(normalizedDescription);
+      setLastSavedDescription(normalizedDescription);
+      setDescriptionDirty(false);
+      const vers = Array.isArray(normalizedReport.versions) ? normalizedReport.versions : [];
       setVersions(vers);
       const currentNo = vers.length ? vers[vers.length - 1].version_no : '';
       setVersion(currentNo);
@@ -76,7 +103,7 @@ const BlueLightViewerPage = () => {
   };
 
   useEffect(() => {
-    const patientTitle = patientNameFromQuery ? `${patientNameFromQuery} - BlueLight Viewer` : 'BlueLight Viewer';
+    const patientTitle = normalizedPatientName ? `${normalizedPatientName} - BlueLight Viewer` : 'BlueLight Viewer';
     setPageTitle(patientTitle);
     setPageDescription('');
     loadReport();
@@ -135,6 +162,39 @@ const BlueLightViewerPage = () => {
     );
   };
 
+  const ensureReportExists = async () => {
+    if (reportId) return reportId;
+    const descriptionForCreate =
+      (studyDescription && studyDescription.length) || (lastSavedDescription && lastSavedDescription.length)
+        ? studyDescription || lastSavedDescription
+        : normalizedPatientName
+          ? `${normalizedPatientName} study`
+          : 'BlueLight Draft';
+    const created = await createReport({
+      study_instance_uid: EFFECTIVE_STUDY_UID,
+      patient_id: normalizedPatientId || null,
+      patient_name: normalizedPatientName || 'anonymous',
+      study_description: descriptionForCreate,
+      modality: reportData?.modality || 'OT'
+    });
+    const newId = created.id;
+    setReportId(newId);
+    try {
+      const refreshed = await getReport(newId);
+      setReportData(refreshed);
+      const vers = Array.isArray(refreshed.versions) ? refreshed.versions : [];
+      setVersions(vers);
+      const refreshedDescription =
+        typeof refreshed.study_description === 'string' ? refreshed.study_description : descriptionForCreate;
+      setStudyDescription(refreshedDescription);
+      setLastSavedDescription(refreshedDescription);
+      setDescriptionDirty(false);
+    } catch (_error) {
+      setVersions([]);
+    }
+    return newId;
+  };
+
   const handleSaveWithDuplicateCheck = async () => {
     try {
       setLoading(true);
@@ -156,18 +216,7 @@ const BlueLightViewerPage = () => {
   };
 
   const performSave = async (payload) => {
-    let id = reportId;
-    if (!id) {
-      const created = await createReport({
-        study_instance_uid: EFFECTIVE_STUDY_UID,
-        patient_id: patientIdFromQuery || null,
-        patient_name: patientNameFromQuery || 'anonymous',
-        study_description: reportData?.study_description || 'BlueLight Draft',
-        modality: reportData?.modality || 'OT'
-      });
-      id = created.id;
-      setReportId(id);
-    }
+    const id = await ensureReportExists();
     const savedVersion = await createReportVersion(id, payload);
     toast.success(`Saved v${savedVersion.version_no}`);
     const refreshed = await getReport(id);
@@ -208,20 +257,7 @@ const BlueLightViewerPage = () => {
     }
     try {
       setLoading(true);
-      let id = reportId;
-      if (!id) {
-        const created = await createReport({
-          study_instance_uid: EFFECTIVE_STUDY_UID,
-          patient_id: patientIdFromQuery || null,
-          patient_name: patientNameFromQuery || 'anonymous',
-          study_description: reportData?.study_description || 'BlueLight Draft',
-          modality: reportData?.modality || 'OT'
-        });
-        id = created.id;
-        setReportId(id);
-        const refreshed = await getReport(id);
-        setReportData(refreshed);
-      }
+      const id = await ensureReportExists();
       const aiContent = await generateReportPreview(id);
       setAiGeneratedContent(aiContent);
       const findings = Array.isArray(aiContent.findings) ? aiContent.findings.join('\n') : (aiContent.findings || '');
@@ -240,6 +276,37 @@ const BlueLightViewerPage = () => {
       toast.error(message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDescriptionChange = (value) => {
+    setStudyDescription(value);
+    setDescriptionDirty(value !== lastSavedDescription);
+  };
+
+  const handleSaveDescription = async () => {
+    if (descriptionSaving || !descriptionDirty) {
+      return;
+    }
+    try {
+      setDescriptionSaving(true);
+      const id = await ensureReportExists();
+      const updated = await updateReportDescription(id, { study_description: studyDescription });
+      setReportData((prev) => ({
+        ...(prev || {}),
+        ...updated,
+        versions: prev?.versions || []
+      }));
+      const savedValue = typeof updated?.study_description === 'string' ? updated.study_description : studyDescription;
+      setStudyDescription(savedValue);
+      setLastSavedDescription(savedValue);
+      setDescriptionDirty(false);
+      toast.success('Description saved');
+    } catch (error) {
+      const message = error?.response?.data?.error || 'Failed to save description';
+      toast.error(message);
+    } finally {
+      setDescriptionSaving(false);
     }
   };
 
@@ -270,6 +337,8 @@ const BlueLightViewerPage = () => {
   }, [patientIdFromQuery, patientNameFromQuery, studyUIDFromQuery]);
 
   const isStudyLoaded = Boolean(embedUrl);
+  const displayPatientName = normalizedPatientName || reportData?.patient_name || 'Unknown patient';
+  const displayPatientId = normalizedPatientId || reportData?.patient_id || 'N/A';
 
   useEffect(() => {
     if (!embedUrl) {
@@ -284,8 +353,7 @@ const BlueLightViewerPage = () => {
     const config = aiGeneratedContent?.model_config;
     if (!config) return '';
     const customName = typeof config.name === 'string' ? config.name.trim() : '';
-    const providerName = typeof config.provider === 'string' ? config.provider.trim() : '';
-    return customName || providerName;
+    return customName;
   }, [aiGeneratedContent]);
 
   return (
@@ -328,6 +396,45 @@ const BlueLightViewerPage = () => {
         </div>
       )}
 
+      <div className="border-b border-slate-200 bg-white px-4 py-3 text-sm text-slate-700">
+        <div className="flex flex-wrap gap-6">
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Patient Name</p>
+            <p className="text-base font-semibold text-slate-900">{displayPatientName}</p>
+          </div>
+          <div>
+            <p className="text-xs uppercase tracking-wide text-slate-500">Patient ID</p>
+            <p className="text-base font-semibold text-slate-900">{displayPatientId}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="border-b border-slate-200 bg-white px-4 py-3">
+        <label htmlFor="study-description" className="text-sm font-semibold text-slate-700">
+          Study Description
+        </label>
+        <textarea
+          id="study-description"
+          rows={2}
+          value={studyDescription}
+          onChange={(e) => handleDescriptionChange(e.target.value)}
+          className="mt-2 w-full rounded-md border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+          placeholder="Add study context for this report"
+        />
+        <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+          <span>{descriptionDirty ? 'Unsaved description changes' : 'Description saved'}</span>
+          <button
+            type="button"
+            onClick={handleSaveDescription}
+            disabled={!descriptionDirty || descriptionSaving}
+            className="inline-flex items-center gap-1 rounded-md border border-slate-300 px-2.5 py-1.5 text-[0.7rem] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+          >
+            {descriptionSaving ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+            Save description
+          </button>
+        </div>
+      </div>
+
       <div className="flex-1 overflow-y-auto px-4 py-4">
         <div className="grid h-full gap-4 lg:grid-cols-[minmax(0,1.6fr)_420px]">
           <div className="flex h-full w-full rounded-2xl border border-slate-200 bg-black shadow-medical">
@@ -362,52 +469,56 @@ const BlueLightViewerPage = () => {
           </div>
 
           <aside className="flex h-full flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-medical">
-            <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3 sm:flex-row sm:items-center sm:gap-3">
-              <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
-                <select
-                  aria-label="Select report version"
-                  value={version || ''}
-                  onChange={(e) => onSelectVersion(e.target.value)}
-                  className="h-9 w-32 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  disabled={!versions.length && !hasUnsavedChanges}
-                >
-                  {(hasUnsavedChanges || !versions.length) && (
-                    <option value="">
-                      {hasUnsavedChanges ? 'Draft (unsaved)' : 'No versions'}
-                    </option>
+            <div className="flex flex-col gap-2 border-b border-slate-200 px-4 py-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <div className="flex flex-wrap items-center gap-2 flex-shrink-0">
+                  <select
+                    aria-label="Select report version"
+                    value={version || ''}
+                    onChange={(e) => onSelectVersion(e.target.value)}
+                    className="h-9 w-32 flex-shrink-0 rounded-md border border-slate-200 bg-white px-2 text-xs text-slate-700 focus:border-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    disabled={!versions.length && !hasUnsavedChanges}
+                  >
+                    {(hasUnsavedChanges || !versions.length) && (
+                      <option value="">
+                        {hasUnsavedChanges ? 'Draft (unsaved)' : 'No versions'}
+                      </option>
+                    )}
+                    {versions.map((v) => (
+                      <option key={v.version_no} value={String(v.version_no)}>
+                        v{v.version_no}{v.version_no === latestVersionNumber ? ' (latest)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1 sm:ml-auto sm:items-end">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={handleGenerate}
+                      disabled={loading || !isStudyLoaded}
+                      className="inline-flex h-8 items-center gap-1 rounded-md bg-blue-600 px-2.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
+                    >
+                      {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                      Generate
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveWithDuplicateCheck}
+                      disabled={!hasUnsavedChanges || loading}
+                      className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-500 px-2.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-50 disabled:opacity-60"
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      Save
+                    </button>
+                  </div>
+                  {isAiMode && currentModelLabel && (
+                    <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[0.65rem] font-semibold text-purple-700">
+                      <Sparkles className="h-3 w-3" />
+                      AI Model: {currentModelLabel}
+                    </span>
                   )}
-                  {versions.map((v) => (
-                    <option key={v.version_no} value={String(v.version_no)}>
-                      v{v.version_no}{v.version_no === latestVersionNumber ? ' (latest)' : ''}
-                    </option>
-                  ))}
-                </select>
-                {isAiMode && aiGeneratedContent?.model_config && (
-                  <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[0.65rem] font-semibold text-purple-700">
-                    <Sparkles className="h-3 w-3" />
-                    {aiGeneratedContent.model_config.provider || aiGeneratedContent.model_config.name}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2 sm:ml-auto">
-                <button
-                  type="button"
-                  onClick={handleGenerate}
-                  disabled={loading || !isStudyLoaded}
-                  className="inline-flex h-8 items-center gap-1 rounded-md bg-blue-600 px-2.5 text-xs font-semibold text-white transition hover:bg-blue-500 disabled:opacity-60"
-                >
-                  {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                  Generate
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveWithDuplicateCheck}
-                  disabled={!hasUnsavedChanges || loading}
-                  className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-500 px-2.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-50 disabled:opacity-60"
-                >
-                  <Save className="h-3.5 w-3.5" />
-                  Save
-                </button>
+                </div>
               </div>
             </div>
 
