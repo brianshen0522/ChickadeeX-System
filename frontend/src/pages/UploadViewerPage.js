@@ -16,6 +16,7 @@ import {
   FileText
 } from 'lucide-react';
 import { usePageContext } from '../contexts/PageContext';
+import { useAuth } from '../contexts/AuthContext';
 import {
   uploadFile,
   listUploads,
@@ -25,6 +26,7 @@ import {
   saveReportVersion,
   getUploadReport
 } from '../services/uploadService';
+import { createReportVersion } from '../services/reportService';
 import api from '../services/api';
 import { resolveBlueLightStartUrl } from '../utils/bluelight';
 
@@ -50,6 +52,7 @@ const formatFileSize = (bytes) => {
 
 const UploadViewerPage = () => {
   const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
+  const { user } = useAuth();
   const [searchParams] = useSearchParams();
   const requestedUploadId = searchParams.get('uploadId');
   const requestedStudyUid = searchParams.get('studyUid');
@@ -94,8 +97,8 @@ const UploadViewerPage = () => {
   const [deleteLinkedReportId, setDeleteLinkedReportId] = useState(null);
   const [isDeletingUpload, setIsDeletingUpload] = useState(false);
   const savedIndicatorTimer = useRef(null);
-  const [isMetadataSaving, setIsMetadataSaving] = useState(false);
   const [viewerLoading, setViewerLoading] = useState(false);
+  const isObserver = user?.role === 'observer';
 
   // Drag and drop state
   const [isDragOver, setIsDragOver] = useState(false);
@@ -221,7 +224,6 @@ const UploadViewerPage = () => {
 
   const latestVersionNo = versionsSorted.length ? versionsSorted[0].version_no : null;
   const hasSavedDraft = Boolean(reportState.reportId) || versionsSorted.length > 0;
-  const metadataSaveEnabled = Boolean(selectedUpload) && Boolean(studyTitle.trim());
 
   useEffect(() => {
     if (!viewerSrc) {
@@ -701,59 +703,17 @@ const UploadViewerPage = () => {
     }
   };
 
-  const handleSaveMetadata = async () => {
-    if (!selectedUpload) return;
+  const handleSaveReport = async () => {
+    if (!selectedUpload || (!reportState.hasUnsavedChanges && !metadataDirty) || reportState.isSaving) {
+      return;
+    }
+
     const trimmedTitle = studyTitle.trim();
     const trimmedSummary = studySummary.trim();
     if (!trimmedTitle) {
       toast.error('Study name is required');
       return;
     }
-
-    try {
-      if (savedIndicatorTimer.current) {
-        clearTimeout(savedIndicatorTimer.current);
-        savedIndicatorTimer.current = null;
-      }
-      setShowSavedIndicator(false);
-      setIsMetadataSaving(true);
-      let reportId = reportState.reportId;
-      if (!reportId) {
-        reportId = await ensureReportExists();
-        setReportState((prev) => ({ ...prev, reportId }));
-      }
-
-      const descriptor = trimmedSummary ? `${trimmedTitle}\n\n${trimmedSummary}` : trimmedTitle;
-      await api.put(`/reports/${reportId}/description`, {
-        study_description: descriptor
-      });
-
-      setStudyTitle(trimmedTitle);
-      setStudySummary(trimmedSummary);
-      setMetadataDirty(false);
-      setUploads((prev) =>
-        prev.map((item) =>
-          item.id === selectedUpload.id
-            ? { ...item, displayTitle: trimmedTitle, displayDescription: trimmedSummary }
-            : item
-        )
-      );
-      setShowSavedIndicator(true);
-      savedIndicatorTimer.current = setTimeout(() => {
-        setShowSavedIndicator(false);
-        savedIndicatorTimer.current = null;
-      }, 2400);
-      toast.success('Draft updated');
-    } catch (error) {
-      console.error('Save metadata failed:', error);
-      toast.error('Failed to save study details');
-    } finally {
-      setIsMetadataSaving(false);
-    }
-  };
-
-  const handleSaveReport = async () => {
-    if (!selectedUpload || !reportState.hasUnsavedChanges || reportState.isSaving) return;
 
     if (savedIndicatorTimer.current) {
       clearTimeout(savedIndicatorTimer.current);
@@ -766,18 +726,53 @@ const UploadViewerPage = () => {
       let reportId = reportState.reportId;
       if (!reportId) {
         reportId = await ensureReportExists();
+        setReportState((prev) => ({ ...prev, reportId }));
       }
 
-      const saved = await saveReportVersion(selectedUpload.id, reportId, {
-        findings: reportState.findings,
-        impression: reportState.impression
-      });
-
-      setReportState((prev) => ({ ...prev, isSaving: false, reportId }));
-      upsertVersionLocally(saved);
-      if (savedIndicatorTimer.current) {
-        clearTimeout(savedIndicatorTimer.current);
+      if (metadataDirty) {
+        if (isObserver) {
+          await api.put(`/demo/${selectedUpload.id}/metadata`, {
+            title: trimmedTitle,
+            summary: trimmedSummary
+          });
+        } else {
+          const descriptor = trimmedSummary ? `${trimmedTitle}\n\n${trimmedSummary}` : trimmedTitle;
+          await api.put(`/reports/${reportId}/description`, {
+            study_description: descriptor
+          });
+        }
+        setMetadataDirty(false);
+        setUploads((prev) =>
+          prev.map((item) =>
+            item.id === selectedUpload.id
+              ? { ...item, displayTitle: trimmedTitle, displayDescription: trimmedSummary }
+              : item
+          )
+        );
       }
+
+      let savedVersion = null;
+      if (reportState.hasUnsavedChanges) {
+        if (isObserver) {
+          savedVersion = await saveReportVersion(selectedUpload.id, reportId, {
+            findings: reportState.findings,
+            impression: reportState.impression
+          });
+        } else {
+          savedVersion = await createReportVersion(reportId, {
+            findings: reportState.findings,
+            impression: reportState.impression
+          });
+        }
+        upsertVersionLocally(savedVersion);
+      }
+
+      setReportState((prev) => ({
+        ...prev,
+        isSaving: false,
+        hasUnsavedChanges: false,
+        lastSavedAt: savedVersion?.created_at ? new Date(savedVersion.created_at) : prev.lastSavedAt || new Date()
+      }));
       setShowSavedIndicator(true);
       savedIndicatorTimer.current = setTimeout(() => {
         setShowSavedIndicator(false);
@@ -785,22 +780,13 @@ const UploadViewerPage = () => {
       }, 2400);
       toast.success('Report saved');
     } catch (error) {
-      if (error.response?.data?.code === 'NO_CHANGES') {
-        setReportState((prev) => ({
-          ...prev,
-          isSaving: false,
-          hasUnsavedChanges: false
-        }));
-        toast.info('No changes to save');
-      } else {
-        setReportState((prev) => ({
-          ...prev,
-          isSaving: false,
-          error: 'Failed to save report'
-        }));
-        toast.error('Failed to save report');
-        console.error('Save failed:', error);
-      }
+      setReportState((prev) => ({
+        ...prev,
+        isSaving: false,
+        error: error?.response?.data?.error || 'Failed to save report'
+      }));
+      toast.error('Failed to save report');
+      console.error('Save failed:', error);
     }
   };
 
@@ -1109,7 +1095,7 @@ const UploadViewerPage = () => {
             <button
               type="button"
               onClick={handleSaveReport}
-              disabled={!reportState.hasUnsavedChanges || reportState.isSaving}
+              disabled={!reportState.hasUnsavedChanges && !metadataDirty || reportState.isSaving || !studyTitle.trim()}
               className="inline-flex h-8 items-center gap-1 rounded-md border border-blue-500 px-2.5 text-xs font-semibold text-blue-600 transition hover:bg-blue-50 disabled:opacity-60"
             >
               {reportState.isSaving ? (
@@ -1129,22 +1115,17 @@ const UploadViewerPage = () => {
 
   <div className="flex-1 px-4 py-1.5 space-y-1.5 min-h-0">
           {selectedUpload && (
-            <div className="flex items-start justify-between gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
-              <div className="min-w-0 flex-1">
-                <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Study File</span>
-                <div
-                  className="mt-1 flex min-w-0 items-baseline gap-1 text-sm font-semibold text-slate-700"
-                  title={resolvedFilename}
+          <div className="flex items-start justify-between gap-3 rounded-md border border-slate-100 bg-slate-50 px-3 py-2">
+            <div className="min-w-0 flex-1">
+              <span className="text-[0.65rem] font-semibold uppercase tracking-[0.18em] text-slate-500">Study File</span>
+              <div
+                className="mt-1 flex min-w-0 items-baseline gap-1 text-sm font-semibold text-slate-700"
+                title={resolvedFilename}
                 >
                   <span className="truncate">{splitFilename.base}</span>
                   {splitFilename.ext && <span className="flex-shrink-0">{splitFilename.ext}</span>}
                 </div>
               </div>
-              {reportState.lastSavedAt && (
-                <span className="mt-1 inline-flex items-center rounded-md border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[0.65rem] font-semibold text-emerald-600">
-                  Saved {format(reportState.lastSavedAt, 'HH:mm')}
-                </span>
-              )}
             </div>
           )}
 
@@ -1361,20 +1342,6 @@ const UploadViewerPage = () => {
                   </div>
                   <div className="flex w-full flex-col gap-2 md:w-[240px]">
                     {renderUploadsDropdown({ fullWidth: true })}
-                    <button
-                      type="button"
-                      onClick={handleSaveMetadata}
-                      disabled={!metadataSaveEnabled || isMetadataSaving}
-                      aria-label="Save report metadata"
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isMetadataSaving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Save className="h-4 w-4" />
-                      )}
-                      <span>Save Report</span>
-                    </button>
                   </div>
                 </div>
               </div>
@@ -1421,20 +1388,6 @@ const UploadViewerPage = () => {
                   </div>
                   <div className="flex w-full flex-col gap-2 md:w-[240px]">
                     {renderUploadsDropdown({ fullWidth: true })}
-                    <button
-                      type="button"
-                      onClick={handleSaveMetadata}
-                      disabled={!metadataSaveEnabled || isMetadataSaving}
-                      aria-label="Save report metadata"
-                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:border-blue-300 hover:text-blue-700 hover:bg-blue-50 focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                    >
-                      {isMetadataSaving ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Save className="h-4 w-4" />
-                      )}
-                      <span>Save Report</span>
-                    </button>
                   </div>
                 </div>
               </div>
