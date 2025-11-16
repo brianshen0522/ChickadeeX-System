@@ -512,27 +512,29 @@ const BlueLightViewerPage = () => {
                       Save
                     </button>
                   </div>
-                  {isAiMode && currentModelLabel && (
-                    <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[0.65rem] font-semibold text-purple-700">
-                      <Sparkles className="h-3 w-3" />
-                      AI Model: {currentModelLabel}
-                    </span>
-                  )}
                 </div>
               </div>
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">
-              {hasUnsavedChanges ? (
-                <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  Unsaved changes
-                </span>
-              ) : versions.length ? (
-                <span className="text-xs text-slate-500">Viewing v{version || latestVersionNumber}</span>
-              ) : (
-                <span className="text-xs text-slate-400">No content saved yet</span>
-              )}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                {hasUnsavedChanges ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-amber-600">
+                    <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                    Unsaved changes
+                  </span>
+                ) : versions.length ? (
+                  <span className="text-xs text-slate-500">Viewing v{version || latestVersionNumber}</span>
+                ) : (
+                  <span className="text-xs text-slate-400">No content saved yet</span>
+                )}
+                {isAiMode && currentModelLabel && (
+                  <span className="inline-flex items-center gap-1 rounded-full border border-purple-200 bg-purple-50 px-2 py-0.5 text-[0.65rem] font-semibold text-purple-700">
+                    <Sparkles className="h-3 w-3" />
+                    AI Model: {currentModelLabel}
+                  </span>
+                )}
+              </div>
 
               <div>
                 <label className="mb-2 block text-sm font-semibold text-slate-700">Findings</label>

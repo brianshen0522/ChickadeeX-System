@@ -1,17 +1,14 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { 
   getReport, 
-  createReportVersion, 
-  generateAIReport, 
   finalizeReport, 
   deleteReport 
 } from '../services/reportService';
 import { 
   ArrowLeft, 
   Edit, 
-  Save, 
   Sparkles, 
   CheckCircle, 
   Clock,
@@ -34,13 +31,6 @@ const ReportDetailPage = () => {
   
   const [report, setReport] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [editing, setEditing] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [editForm, setEditForm] = useState({
-    findings: '',
-    impression: '',
-    clinical_context: ''
-  });
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [finalizing, setFinalizing] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -53,7 +43,6 @@ const ReportDetailPage = () => {
   const canFinalize = ['doctor', 'observer'].includes(user?.role);
   const canExport = ['doctor', 'researcher'].includes(user?.role);
   const canDelete = ['doctor', 'observer'].includes(user?.role);
-  const isDoctor = user?.role === 'doctor';
 
   useEffect(() => {
     fetchReport();
@@ -64,14 +53,8 @@ const ReportDetailPage = () => {
       const data = await getReport(reportId);
       setReport(data);
       
-      // Set latest version in edit form
       if (data.versions && data.versions.length > 0) {
         const latest = data.versions[data.versions.length - 1];
-        setEditForm({
-          findings: latest.findings,
-          impression: latest.impression,
-          clinical_context: latest.clinical_context || ''
-        });
         setSelectedVersionNo(String(latest.version_no));
       } else {
         setSelectedVersionNo(null);
@@ -81,39 +64,6 @@ const ReportDetailPage = () => {
       navigate('/reports');
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleSave = async () => {
-    try {
-      await createReportVersion(reportId, editForm);
-      toast.success('Report version saved successfully!');
-      setEditing(false);
-      fetchReport();
-    } catch (error) {
-      toast.error('Failed to save report');
-    }
-  };
-
-  const handleGenerateAI = async () => {
-    setGenerating(true);
-    try {
-      const aiVersion = await generateAIReport(reportId, {
-        clinical_context: editForm.clinical_context
-      });
-      
-      setEditForm({
-        findings: aiVersion.findings,
-        impression: aiVersion.impression,
-        clinical_context: editForm.clinical_context
-      });
-      
-      toast.success('AI report generated successfully!');
-      fetchReport();
-    } catch (error) {
-      toast.error('Failed to generate AI report');
-    } finally {
-      setGenerating(false);
     }
   };
 
@@ -182,6 +132,34 @@ const ReportDetailPage = () => {
     setViewerFrameKey((prev) => prev + 1);
   }, [bluelightEmbedUrl]);
 
+  const handleCopyStudyUid = useCallback(async () => {
+    if (!report?.study_instance_uid) {
+      toast.error('Study UID unavailable');
+      return;
+    }
+    try {
+      if (typeof navigator !== 'undefined' && navigator?.clipboard?.writeText) {
+        await navigator.clipboard.writeText(report.study_instance_uid);
+      } else if (typeof document !== 'undefined') {
+        const textarea = document.createElement('textarea');
+        textarea.value = report.study_instance_uid;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } else {
+        throw new Error('Clipboard not available');
+      }
+      toast.success('Study UID copied');
+    } catch (error) {
+      console.error('Failed to copy Study UID', error);
+      toast.error('Copy failed');
+    }
+  }, [report?.study_instance_uid]);
+
   if (loading) {
     return (
       <div className="p-12 flex justify-center">
@@ -199,10 +177,10 @@ const ReportDetailPage = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto h-full overflow-y-auto">
+    <div className="max-w-6xl mx-auto h-full overflow-y-auto px-2">
       {/* Compact Header */}
-      <div className="mb-4 mt-2 mr-1 ml-1">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-4">
+      <div className="mb-4 mt-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
           <button
             onClick={() => navigate('/reports')}
             className="inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
@@ -211,7 +189,7 @@ const ReportDetailPage = () => {
             Back to Reports
           </button>
           
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2 justify-end">
             {canExport && report.finalized_at && (
               <button
                 onClick={() => toast.success('Export feature will be implemented')}
@@ -222,69 +200,23 @@ const ReportDetailPage = () => {
               </button>
             )}
 
-            {canEdit && !report.finalized_at && !editing && (
+            {canEdit && !report.finalized_at && (
               <button
                 onClick={() => {
-                  if (isDoctor) {
-                    if (!report?.study_instance_uid) {
-                      toast.error('Study UID missing for this report');
-                      return;
-                    }
-                    const viewerParams = new URLSearchParams();
-                    viewerParams.set('StudyInstanceUID', report.study_instance_uid);
-                    if (report.patient_name) viewerParams.set('PatientName', report.patient_name);
-                    if (report.patient_id) viewerParams.set('PatientID', report.patient_id);
-                    navigate(`/bluelight?${viewerParams.toString()}`);
+                  if (!report?.study_instance_uid) {
+                    toast.error('Study UID missing for this report');
                     return;
                   }
-                  setEditing(true);
+                  const viewerParams = new URLSearchParams();
+                  viewerParams.set('StudyInstanceUID', report.study_instance_uid);
+                  if (report.patient_name) viewerParams.set('PatientName', report.patient_name);
+                  if (report.patient_id) viewerParams.set('PatientID', report.patient_id);
+                  navigate(`/bluelight?${viewerParams.toString()}`);
                 }}
                 className="inline-flex items-center px-3 py-1.5 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
               >
                 <Edit className="h-4 w-4 mr-1.5" />
                 Edit Draft
-              </button>
-            )}
-
-            {canEdit && !report.finalized_at && editing && (
-              <div className="flex flex-wrap items-center gap-2">
-                <button
-                  onClick={handleGenerateAI}
-                  disabled={generating}
-                  className="inline-flex items-center px-3 py-1.5 border border-purple-200 text-sm font-medium rounded-lg text-purple-700 bg-purple-50 hover:bg-purple-100 disabled:opacity-50 focus:outline-none focus:ring-2 focus:ring-purple-500 transition-colors"
-                >
-                  {generating ? (
-                    <LoadingSpinner size="small" />
-                  ) : (
-                    <>
-                      <Sparkles className="h-4 w-4 mr-1.5" />
-                      Generate AI
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={handleSave}
-                  className="inline-flex items-center px-3 py-1.5 border border-emerald-200 text-sm font-medium rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
-                >
-                  <Save className="h-4 w-4 mr-1.5" />
-                  Save
-                </button>
-                <button
-                  onClick={() => setEditing(false)}
-                  className="inline-flex items-center px-3 py-1.5 border border-gray-200 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 transition-colors"
-                >
-                  Cancel
-                </button>
-              </div>
-            )}
-
-            {canFinalize && !editing && !report.finalized_at && latestVersion && (
-              <button
-                onClick={() => setShowConfirmDialog(true)}
-                className="inline-flex items-center px-3 py-1.5 border border-emerald-200 text-sm font-medium rounded-lg text-emerald-700 bg-emerald-50 hover:bg-emerald-100 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-colors"
-              >
-                <CheckCircle className="h-4 w-4 mr-1.5" />
-                Finalize
               </button>
             )}
 
@@ -345,170 +277,137 @@ const ReportDetailPage = () => {
         </div>
       </div>
 
-      {/* Compact Study Information */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4 mb-4">
-        <h2 className="text-sm font-medium text-gray-700 mb-3">Study Information</h2>
-        
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-          <div>
-            <dt className="text-gray-500 font-medium">Patient ID</dt>
-            <dd className="text-gray-900 font-mono mt-1">{report.patient_id || '—'}</dd>
-          </div>
-          
-          {report.patient_name && (
-            <div>
-              <dt className="text-gray-500 font-medium">Name</dt>
-              <dd className="text-gray-900 mt-1">{report.patient_name}</dd>
-            </div>
-          )}
-          
-          {report.study_date && (
-            <div>
-              <dt className="text-gray-500 font-medium">Date</dt>
-              <dd className="text-gray-900 mt-1">
-                {format(new Date(report.study_date), 'MMM dd, yyyy')}
-              </dd>
-            </div>
-          )}
-        </div>
-        
-        {report.study_description && (
-          <div className="mt-4 pt-4 border-t border-gray-100">
-            <dt className="text-gray-500 font-medium text-sm">Description</dt>
-            <dd className="text-gray-900 text-sm mt-1">{report.study_description}</dd>
-          </div>
-        )}
-      </div>
-
-      <div className="mb-4">
-        <div className="flex flex-col gap-2 lg:flex-row">
-          <div className="flex-1">
-            <div className="rounded-lg border border-gray-200 bg-white">
-              <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
+      <div className="grid gap-4 pb-6 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
+        <div className="flex flex-col gap-4">
+          {/* Compact Study Information */}
+          <div className="bg-white border border-gray-200 rounded-lg p-4">
+            <h2 className="text-sm font-medium text-gray-700 mb-3">Study Information</h2>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+              <div>
+                <dt className="text-gray-500 font-medium">Patient ID</dt>
+                <dd className="text-gray-900 font-mono mt-1">{report.patient_id || '—'}</dd>
+              </div>
+              
+              {report.patient_name && (
                 <div>
-                  <p className="text-sm font-semibold text-gray-900">BlueLight Viewer</p>
-                  <p className="text-xs text-gray-500">
-                    Study UID: {report.study_instance_uid || 'Unavailable'}
+                  <dt className="text-gray-500 font-medium">Name</dt>
+                  <dd className="text-gray-900 mt-1">{report.patient_name}</dd>
+                </div>
+              )}
+              
+              {report.study_date && (
+                <div>
+                  <dt className="text-gray-500 font-medium">Date</dt>
+                  <dd className="text-gray-900 mt-1">
+                    {format(new Date(report.study_date), 'MMM dd, yyyy')}
+                  </dd>
+                </div>
+              )}
+              <div>
+                <dt className="text-gray-500 font-medium">Study UID</dt>
+                <dd className="mt-1 flex items-center gap-2 font-mono text-xs text-gray-900">
+                  {report.study_instance_uid || 'Unavailable'}
+                  {report.study_instance_uid && (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-1 rounded border border-gray-200 px-2 py-1 text-[0.65rem] text-gray-600 hover:bg-gray-50 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      onClick={handleCopyStudyUid}
+                    >
+                      <Copy className="h-3 w-3" />
+                    </button>
+                  )}
+                </dd>
+              </div>
+            </div>
+            
+            {report.study_description && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <dt className="text-gray-500 font-medium text-sm">Description</dt>
+                <dd className="text-gray-900 text-sm mt-1">{report.study_description}</dd>
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-xl border border-gray-200 bg-white shadow-sm">
+            <div className="flex items-center justify-between border-b border-gray-100 px-4 py-2">
+              <div>
+                <p className="text-sm font-semibold text-gray-900">BlueLight Viewer</p>
+                <p className="text-xs text-gray-500">
+                  Embedded study view
+                </p>
+              </div>
+              {viewerLoading && (
+                <span className="inline-flex items-center gap-1 text-xs text-gray-500">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Loading
+                </span>
+              )}
+            </div>
+            <div className="relative h-[640px] bg-black">
+              {bluelightEmbedUrl ? (
+                <>
+                  {viewerLoading && (
+                    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/60 text-white">
+                      <Loader2 className="h-6 w-6 animate-spin text-blue-200" />
+                      <span className="text-xs text-gray-100">Preparing viewer…</span>
+                    </div>
+                  )}
+                  <iframe
+                    key={viewerFrameKey}
+                    title="BlueLight Viewer"
+                    src={bluelightEmbedUrl}
+                    className={`h-full w-full border-0 ${viewerLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}
+                    allowFullScreen
+                    onLoad={() => setViewerLoading(false)}
+                  />
+                </>
+              ) : (
+                <div className="flex h-full flex-col items-center justify-center gap-3 bg-gray-900 px-6 text-center">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-full border border-gray-700 bg-gray-800/70">
+                    <FileText className="h-8 w-8 text-gray-500" />
+                  </div>
+                  <p className="text-sm font-semibold text-gray-200">No study available</p>
+                  <p className="text-xs text-gray-400">
+                    This report is missing a Study Instance UID and cannot load the embedded viewer.
                   </p>
                 </div>
-                {viewerLoading && (
-                  <span className="inline-flex items-center gap-1 text-xs text-gray-500">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Loading
-                  </span>
-                )}
-              </div>
-              <div className="relative h-[360px] bg-black">
-                {bluelightEmbedUrl ? (
-                  <>
-                    {viewerLoading && (
-                      <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-2 bg-black/60 text-white">
-                        <Loader2 className="h-6 w-6 animate-spin text-blue-200" />
-                        <span className="text-xs text-gray-100">Preparing viewer…</span>
-                      </div>
-                    )}
-                    <iframe
-                      key={viewerFrameKey}
-                      title="BlueLight Viewer"
-                      src={bluelightEmbedUrl}
-                      className={`h-full w-full border-0 ${viewerLoading ? 'opacity-0' : 'opacity-100'} transition-opacity duration-300`}
-                      allowFullScreen
-                      onLoad={() => setViewerLoading(false)}
-                    />
-                  </>
-                ) : (
-                  <div className="flex h-full flex-col items-center justify-center gap-3 bg-gray-900 px-6 text-center">
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full border border-gray-700 bg-gray-800/70">
-                      <FileText className="h-8 w-8 text-gray-500" />
-                    </div>
-                    <p className="text-sm font-semibold text-gray-200">No study available</p>
-                    <p className="text-xs text-gray-400">
-                      This report is missing a Study Instance UID and cannot load the embedded viewer.
-                    </p>
-                  </div>
-                )}
-              </div>
+              )}
             </div>
           </div>
         </div>
-      </div>
 
-      {/* Report Content */}
-      <div className="bg-white border border-gray-200 rounded-lg p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
-          <h2 className="text-sm font-medium text-gray-700">Report Content</h2>
-          <div className="flex items-center gap-3">
-            {report?.versions?.length > 0 && (
-              <label className="flex items-center gap-2 text-xs text-gray-600">
-                Version
-                <select
-                  value={selectedVersionNo || (latestVersion ? String(latestVersion.version_no) : '')}
-                  onChange={(e) => setSelectedVersionNo(e.target.value)}
-                  disabled={editing}
-                  className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 disabled:opacity-60"
-                >
-                  {report.versions.map((version) => (
-                    <option key={version.version_no} value={String(version.version_no)}>
-                      v{version.version_no}{version.version_no === latestVersion?.version_no ? ' (latest)' : ''}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            )}
-            {viewingVersion && (
-              <span className="text-xs text-gray-500 inline-flex items-center">
-                <Shield className="h-3 w-3 mr-1" />
-                v{viewingVersion.version_no}
-              </span>
-            )}
+        {/* Report Content */}
+        <div className="bg-white border-2 border-blue-100 rounded-xl p-4 h-full shadow-md">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+            <h2 className="text-sm font-medium text-gray-700">Report Content</h2>
+            <div className="flex items-center gap-3">
+              {report?.versions?.length > 0 && (
+                <label className="flex items-center gap-2 text-xs text-gray-600">
+                  Version
+                  <select
+                    value={selectedVersionNo || (latestVersion ? String(latestVersion.version_no) : '')}
+                    onChange={(e) => setSelectedVersionNo(e.target.value)}
+                    className="rounded border border-gray-300 bg-white px-2 py-1 text-xs text-gray-800 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  >
+                    {report.versions.map((version) => (
+                      <option key={version.version_no} value={String(version.version_no)}>
+                        v{version.version_no}{version.version_no === latestVersion?.version_no ? ' (latest)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {viewingVersion && (
+                <span className="text-xs text-gray-500 inline-flex items-center">
+                  <Shield className="h-3 w-3 mr-1" />
+                  v{viewingVersion.version_no}
+                </span>
+              )}
+            </div>
           </div>
-        </div>
         
-        {editing ? (
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Clinical Context</label>
-              <textarea
-                rows={3}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none"
-                placeholder="Enter clinical context..."
-                value={editForm.clinical_context}
-                onChange={(e) => setEditForm(prev => ({
-                  ...prev,
-                  clinical_context: e.target.value
-                }))}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Findings</label>
-              <textarea
-                rows={6}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none"
-                placeholder="Enter findings..."
-                value={editForm.findings}
-                onChange={(e) => setEditForm(prev => ({
-                  ...prev,
-                  findings: e.target.value
-                }))}
-              />
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Impression</label>
-              <textarea
-                rows={4}
-                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors resize-none"
-                placeholder="Enter impression..."
-                value={editForm.impression}
-                onChange={(e) => setEditForm(prev => ({
-                  ...prev,
-                  impression: e.target.value
-                }))}
-              />
-            </div>
-          </div>
-        ) : viewingVersion ? (
+        {viewingVersion ? (
           <div className="space-y-4">
             {viewingVersion.clinical_context && (
               <div>
@@ -553,16 +452,38 @@ const ReportDetailPage = () => {
             <p className="text-xs text-gray-500 mb-4">This report is empty.</p>
             {canEdit && (
               <button
-                onClick={() => setEditing(true)}
+                onClick={() => {
+                  if (!report?.study_instance_uid) {
+                    toast.error('Study UID missing for this report');
+                    return;
+                  }
+                  const viewerParams = new URLSearchParams();
+                  viewerParams.set('StudyInstanceUID', report.study_instance_uid);
+                  if (report.patient_name) viewerParams.set('PatientName', report.patient_name);
+                  if (report.patient_id) viewerParams.set('PatientID', report.patient_id);
+                  navigate(`/bluelight?${viewerParams.toString()}`);
+                }}
                 className="inline-flex items-center px-4 py-2 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
               >
                 <Edit className="h-4 w-4 mr-1.5" />
-                Add Content
+                Open in BlueLight
               </button>
             )}
           </div>
         )}
       </div>
+
+      {canFinalize && !report.finalized_at && latestVersion && (
+        <div className="pb-8">
+          <button
+            onClick={() => setShowConfirmDialog(true)}
+            className="inline-flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+          >
+            <CheckCircle className="h-4 w-4" />
+            Finalize Report
+          </button>
+        </div>
+      )}
 
       {/* Delete Confirmation Dialog */}
       {deleteDialogOpen && (
@@ -669,6 +590,7 @@ const ReportDetailPage = () => {
         </div>
       )}
     </div>
+  </div>
   );
 };
 

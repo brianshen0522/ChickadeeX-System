@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import * as authService from '../services/authService';
 
@@ -17,17 +17,30 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const location = useLocation();
+  const hasBootstrappedRef = useRef(false);
+  const hasVerifiedSessionRef = useRef(false);
 
   // Check for existing session on mount (but skip on login page)
   useEffect(() => {
-    authService.bootstrapAuthToken();
-
-    // Don't check auth status on login page to avoid unnecessary API calls
-    if (location.pathname !== '/login') {
-      checkAuthStatus();
-    } else {
-      setIsLoading(false);
+    if (!hasBootstrappedRef.current) {
+      authService.bootstrapAuthToken();
+      hasBootstrappedRef.current = true;
     }
+
+    if (location.pathname === '/login') {
+      hasVerifiedSessionRef.current = false;
+      setIsLoading(false);
+      return;
+    }
+
+    if (hasVerifiedSessionRef.current) {
+      setIsLoading(false);
+      return;
+    }
+
+    hasVerifiedSessionRef.current = true;
+    setIsLoading(true);
+    checkAuthStatus();
   }, [location.pathname]);
 
   const checkAuthStatus = async (retryCount = 0) => {
@@ -38,6 +51,7 @@ export const AuthProvider = ({ children }) => {
       const userData = await authService.getCurrentUser();
       setUser(userData.user);
       setIsAuthenticated(true);
+      hasVerifiedSessionRef.current = true;
     } catch (error) {
       authError = error;
       console.error('Auth check failed:', error);
@@ -95,6 +109,7 @@ export const AuthProvider = ({ children }) => {
       // Cookie is cleared by server
       setUser(null);
       setIsAuthenticated(false);
+      hasVerifiedSessionRef.current = false;
     }
   };
 
