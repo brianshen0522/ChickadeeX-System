@@ -191,14 +191,6 @@ const DashboardPage = () => {
             cta: 'Browse Studies',
             roles: ['doctor']
           },
-          {
-            name: 'BlueLight Viewer',
-            description: 'Launch the embedded DICOM viewer for synchronized reporting.',
-            icon: Activity,
-            to: '/bluelight',
-            cta: 'Open Viewer',
-            roles: ['doctor']
-          }
         ]
       },
       {

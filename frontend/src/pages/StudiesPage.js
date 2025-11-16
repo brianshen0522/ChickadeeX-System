@@ -3,6 +3,7 @@ import { searchStudies, getPACSBase } from '../services/dicomService';
 import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import { usePageContext } from '../contexts/PageContext';
+import { resolveBlueLightStartUrl } from '../utils/bluelight';
 import { Search, Filter, Calendar, User, Hash, Settings, X, ChevronDown } from 'lucide-react';
 
 const modalityOptions = [
@@ -170,6 +171,12 @@ const StudiesPage = () => {
       return { ...p, offset: next };
     });
   };
+
+  const blueLightStartUrl =
+    resolveBlueLightStartUrl() ||
+    (typeof window !== 'undefined'
+      ? `${window.location.protocol}//${window.location.host}/bluelight/html/start.html`
+      : 'http://localhost/bluelight/html/start.html');
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -439,7 +446,7 @@ const StudiesPage = () => {
                       PatientID: pid || ''
                     });
                     const viewerLink = `${appOrigin}/bluelight?${viewerParams.toString()}`;
-                    const copyLink = `http://localhost/bluelight/html/start.html?${viewerParams.toString()}`;
+                    const copyLink = `${blueLightStartUrl}?${viewerParams.toString()}`;
                   const studiesBase = pacsBase?.studies_base?.replace(/\/*$/,'') || '';
                   const tnUrl = uid ? `${studiesBase}/${encodeURIComponent(uid)}/thumbnail?viewport=32,32` : '';
                   const pacsLink = uid ? `${studiesBase}/${encodeURIComponent(uid)}` : '#';

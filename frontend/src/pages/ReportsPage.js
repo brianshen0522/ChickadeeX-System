@@ -458,9 +458,6 @@ const ReportsPage = () => {
                             <div className="mt-1">
                               <div className="grid gap-2 text-xs text-gray-600 sm:grid-cols-2 sm:items-center">
                                 <div className="flex flex-wrap items-center gap-2">
-                                  <span className="font-medium text-gray-500">Modality</span>
-                                  <span className="text-gray-800">{report.modality || '—'}</span>
-                                  <span className="text-gray-300">•</span>
                                   <span className="font-medium text-gray-500">Patient</span>
                                   <span className="font-mono text-gray-800">{truncatedPatientId}</span>
                                 </div>

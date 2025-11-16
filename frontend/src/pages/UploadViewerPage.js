@@ -26,6 +26,7 @@ import {
   getUploadReport
 } from '../services/uploadService';
 import api from '../services/api';
+import { resolveBlueLightStartUrl } from '../utils/bluelight';
 
 const formatTimestamp = (timestamp, fallback = '--') => {
   if (!timestamp) return fallback;
@@ -104,6 +105,15 @@ const UploadViewerPage = () => {
     return uploads.find((upload) => upload.id === selectedUploadId) || null;
   }, [uploads, selectedUploadId]);
 
+  const getModalityLabel = useCallback((uploadItem) => {
+    if (!uploadItem) return 'Unknown';
+    if (uploadItem.isDicom) {
+      const raw = typeof uploadItem.modality === 'string' ? uploadItem.modality.trim() : '';
+      return raw || 'OT';
+    }
+    return 'Unknown';
+  }, []);
+
   const resolvedFilename = useMemo(() => {
     if (selectedUpload?.originalFilename) {
       return selectedUpload.originalFilename;
@@ -180,17 +190,9 @@ const UploadViewerPage = () => {
 
   const viewerSrc = useMemo(() => {
     if (!selectedUpload) return '';
-    if (typeof window === 'undefined') return '';
 
-    const explicitBase = process.env.REACT_APP_BLUELIGHT_BASE_URL;
-    let baseUrl;
-
-    if (explicitBase) {
-      baseUrl = explicitBase.replace(/\/+$/, '') + '/html/start.html';
-    } else {
-      const { protocol, hostname } = window.location;
-      baseUrl = `${protocol}//${hostname}/bluelight/html/start.html`;
-    }
+    const baseUrl = resolveBlueLightStartUrl();
+    if (!baseUrl) return '';
 
     const params = new URLSearchParams();
 
@@ -658,7 +660,7 @@ const UploadViewerPage = () => {
     try {
       const result = await generateUploadReport(selectedUpload.id, {
         study_description: studyTitle || selectedUpload.originalFilename,
-        modality: selectedUpload.modality,
+        modality: getModalityLabel(selectedUpload),
         clinical_context: studySummary || ''
       });
 
@@ -964,7 +966,6 @@ const UploadViewerPage = () => {
                       </p>
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-[0.7rem] text-slate-500">
                         <span>{upload.isDicom ? 'DICOM' : 'Image'}</span>
-                        {upload.modality && <span>{upload.modality}</span>}
                         <span>{formatFileSize(upload.fileSize)}</span>
                         <span>{formatTimestamp(upload.createdAt)}</span>
                       </div>

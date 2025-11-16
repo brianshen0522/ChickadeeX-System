@@ -1,5 +1,6 @@
 const express = require('express');
 const axios = require('axios');
+const AdmZip = require('adm-zip');
 const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { getDB } = require('../database/connection');
@@ -182,6 +183,26 @@ const normalizeDicomArray = (payload) => {
   return [];
 };
 
+const extractFirstDicomFromZip = (zipBuffer) => {
+  if (!zipBuffer || !zipBuffer.length) {
+    return null;
+  }
+  try {
+    const zip = new AdmZip(zipBuffer);
+    const entries = zip.getEntries();
+    if (!entries || !entries.length) {
+      return null;
+    }
+    const dicomEntry =
+      entries.find((entry) => !entry.isDirectory && /\.dcm$/i.test(entry.entryName)) ||
+      entries.find((entry) => !entry.isDirectory);
+    return dicomEntry ? dicomEntry.getData() : null;
+  } catch (error) {
+    logger.warn('Failed to parse DICOM ZIP archive', { error: error.message });
+    return null;
+  }
+};
+
 const resolveFirstInstance = async ({
   studyUID,
   studiesBase,
@@ -219,6 +240,21 @@ const resolveFirstInstance = async ({
   }
 
   return { seriesUID, sopInstanceUID };
+};
+
+const downloadStudyArchiveBuffer = async ({
+  studyUID,
+  studiesBase,
+  authHeaders,
+  timeout
+}) => {
+  const url = `${studiesBase}/${encodeURIComponent(studyUID)}`;
+  const response = await axios.get(url, {
+    headers: { ...authHeaders, Accept: 'application/zip' },
+    responseType: 'arraybuffer',
+    timeout
+  });
+  return Buffer.from(response.data);
 };
 
 // Download a study via WADO-RS (zip, dcm sample, or rendered png)
@@ -296,32 +332,55 @@ router.get('/studies/:studyUID/download', async (req, res) => {
     const instanceBase = `${studiesBase}/${encodeURIComponent(studyUID)}/series/${encodeURIComponent(seriesUID)}/instances/${encodeURIComponent(sopInstanceUID)}`;
 
     if (format === 'dcm') {
-      const response = await axios.get(instanceBase, {
-        headers: { ...authHeaders, Accept: 'application/dicom' },
-        responseType: 'stream',
-        timeout
-      });
-      if (response.headers['content-type']) {
-        res.setHeader('Content-Type', response.headers['content-type']);
-      } else {
-        res.setHeader('Content-Type', 'application/dicom');
-      }
-      if (response.headers['content-disposition']) {
-        res.setHeader('Content-Disposition', response.headers['content-disposition']);
-      } else {
+      try {
+        const response = await axios.get(instanceBase, {
+          headers: { ...authHeaders, Accept: 'application/dicom' },
+          responseType: 'stream',
+          timeout
+        });
+        if (response.headers['content-type']) {
+          res.setHeader('Content-Type', response.headers['content-type']);
+        } else {
+          res.setHeader('Content-Type', 'application/dicom');
+        }
+        if (response.headers['content-disposition']) {
+          res.setHeader('Content-Disposition', response.headers['content-disposition']);
+        } else {
+          const fallback = sanitizeFilename(requestedFilename, `study-${studyUID}`);
+          res.setHeader('Content-Disposition', `attachment; filename="${fallback}.dcm"`);
+        }
+        if (response.headers['content-length']) {
+          res.setHeader('Content-Length', response.headers['content-length']);
+        }
+        res.status(200);
+        response.data.on('error', (err) => {
+          logger.error('Stream error during DCM download:', err?.message || err);
+          res.destroy(err);
+        });
+        response.data.pipe(res);
+        return;
+      } catch (primaryError) {
+        logger.warn('Primary WADO-RS DICOM fetch failed, attempting ZIP fallback', {
+          studyUID,
+          error: primaryError?.message || primaryError
+        });
+        const archiveBuffer = await downloadStudyArchiveBuffer({
+          studyUID,
+          studiesBase,
+          authHeaders,
+          timeout
+        });
+        const dicomBuffer = extractFirstDicomFromZip(archiveBuffer);
+        if (!dicomBuffer) {
+          throw new Error('No DICOM files found in study archive');
+        }
         const fallback = sanitizeFilename(requestedFilename, `study-${studyUID}`);
+        res.setHeader('Content-Type', 'application/dicom');
         res.setHeader('Content-Disposition', `attachment; filename="${fallback}.dcm"`);
+        res.setHeader('Content-Length', dicomBuffer.length);
+        res.status(200).end(dicomBuffer);
+        return;
       }
-      if (response.headers['content-length']) {
-        res.setHeader('Content-Length', response.headers['content-length']);
-      }
-      res.status(200);
-      response.data.on('error', (err) => {
-        logger.error('Stream error during DCM download:', err?.message || err);
-        res.destroy(err);
-      });
-      response.data.pipe(res);
-      return;
     }
 
     const renderedUrl = `${instanceBase}/rendered`;

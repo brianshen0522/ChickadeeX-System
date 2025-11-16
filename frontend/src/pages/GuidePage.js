@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { usePageContext } from '../contexts/PageContext';
+import { useAuth } from '../contexts/AuthContext';
 import {
   UploadCloud,
   Sparkles,
@@ -23,6 +24,8 @@ import {
 
 const GuidePage = () => {
   const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
+  const { user } = useAuth();
+  const canAccessDemo = user?.role === 'observer';
 
   useEffect(() => {
     setPageTitle('Guide');
@@ -130,13 +133,15 @@ const GuidePage = () => {
             <h1 className="text-3xl font-bold text-slate-900">Doctor Workflow</h1>
             <p className="text-lg text-slate-600">醫師工作流程</p>
           </div>
-          <Link
-            to="/demo"
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
-          >
-            <UploadCloud className="h-5 w-5" />
-            <span>Start Demo</span>
-          </Link>
+          {canAccessDemo && (
+            <Link
+              to="/demo"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
+            >
+              <UploadCloud className="h-5 w-5" />
+              <span>Start Demo</span>
+            </Link>
+          )}
         </div>
       </div>
 
@@ -512,15 +517,17 @@ const GuidePage = () => {
 
       {/* Footer */}
       <div className="border-t border-slate-200 pt-6 text-center">
-        <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
-          <Link
-            to="/demo"
-            className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
-          >
-            <UploadCloud className="h-5 w-5" />
-            <span>Start Demo</span>
-          </Link>
-        </div>
+        {canAccessDemo && (
+          <div className="mt-4 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              to="/demo"
+              className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-6 py-3 font-semibold text-white transition hover:bg-blue-700"
+            >
+              <UploadCloud className="h-5 w-5" />
+              <span>Start Demo</span>
+            </Link>
+          </div>
+        )}
       </div>
     </div>
   );

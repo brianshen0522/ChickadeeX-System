@@ -770,6 +770,115 @@ async function generatePlaceholderImage(outputPath, baseFileName) {
   logger.info(`DICOM placeholder JPEG created: ${outputPath}`);
 }
 
+const extractDicomString = (value) => {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed.length ? trimmed : undefined;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const extracted = extractDicomString(entry);
+      if (extracted) {
+        return extracted;
+      }
+    }
+    return undefined;
+  }
+  if (typeof value === 'object') {
+    if (typeof value.Alphabetic === 'string') {
+      const trimmed = value.Alphabetic.trim();
+      if (trimmed.length) {
+        return trimmed;
+      }
+    }
+    if (Array.isArray(value.Value)) {
+      return extractDicomString(value.Value);
+    }
+    if (typeof value.value === 'string') {
+      const trimmed = value.value.trim();
+      if (trimmed.length) {
+        return trimmed;
+      }
+    }
+  }
+  return undefined;
+};
+
+const resolveDicomTagString = (dataset, keys = []) => {
+  if (!dataset || !Array.isArray(keys)) {
+    return undefined;
+  }
+
+  for (const key of keys) {
+    if (!key) {
+      continue;
+    }
+    const value = dataset[key];
+    const extracted = extractDicomString(value);
+    if (extracted) {
+      return extracted;
+    }
+  }
+
+  return undefined;
+};
+
+const formatModalityLabel = (rawValue) => {
+  if (!rawValue) {
+    return null;
+  }
+  const trimmed = rawValue.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const bracketMatch = trimmed.match(/\[(.*?)\]/);
+  if (bracketMatch && bracketMatch[1]) {
+    const bracketValue = bracketMatch[1].trim();
+    if (bracketValue) {
+      return bracketValue;
+    }
+  }
+  return trimmed;
+};
+
+const readDicomTagValue = async (dicomPath, tag) => {
+  const normalizedTag = (() => {
+    if (!tag) return null;
+    if (tag.startsWith('x')) return tag;
+    const hex = tag.replace(/[^0-9a-fA-F]/g, '');
+    if (!hex) return null;
+    return `x${hex.padStart(8, '0')}`;
+  })();
+
+  if (!normalizedTag) {
+    return undefined;
+  }
+
+  try {
+    const fileBuffer = await fsp.readFile(dicomPath);
+    const byteArray = new Uint8Array(
+      fileBuffer.buffer,
+      fileBuffer.byteOffset,
+      fileBuffer.byteLength
+    );
+    const data = dicomParser.parseDicom(byteArray);
+    return data.string(normalizedTag) || data.string(normalizedTag.replace(/^x/, ''));
+  } catch (error) {
+    logger.debug?.('Failed to read DICOM tag with fallback parser', {
+      dicomPath,
+      tag: normalizedTag,
+      error: error.message
+    });
+    return undefined;
+  }
+};
+
 const getDicomMetadata = async (dicomPath) => {
   try {
     const stats = fs.statSync(dicomPath);
@@ -777,14 +886,34 @@ const getDicomMetadata = async (dicomPath) => {
     try {
       const dicomBuffer = fs.readFileSync(dicomPath);
       const dataSet = dcmjs.data.DicomMessage.readFile(dicomBuffer);
-      const dataset = dcmjs.data.DicomMetaDictionary.naturalizeDataset(dataSet.dict);
+      const naturalized = dcmjs.data.DicomMetaDictionary.naturalizeDataset(dataSet.dict);
+      const dataset = dcmjs.data.DicomMetaDictionary.namifyDataset(naturalized);
+
+      let rawModality = dataSet.string('x00080060') || dataSet.string('00080060');
+      if (!rawModality) {
+        rawModality = resolveDicomTagString(dataset, [
+          'Modality',
+          'modality',
+          '00080060',
+          'x00080060',
+          '0x00080060',
+          '0008,0060',
+          '(0008,0060)'
+        ]);
+      }
+      if (!rawModality) {
+        rawModality = await readDicomTagValue(dicomPath, 'x00080060');
+      }
+
+      const modality = formatModalityLabel(rawModality) || rawModality || 'OT';
 
       return {
         patientId: dataset.PatientID || 'ANON',
         patientName: dataset.PatientName?.Alphabetic || 'Anonymous',
         studyDate: dataset.StudyDate || new Date().toISOString().split('T')[0].replace(/-/g, ''),
         studyTime: dataset.StudyTime || '',
-        modality: dataset.Modality || 'OT',
+        modality,
+        modality_raw: rawModality || null,
         studyDescription: dataset.StudyDescription || 'DICOM Study',
         seriesDescription: dataset.SeriesDescription || '',
         institutionName: dataset.InstitutionName || '',
@@ -808,6 +937,7 @@ const getDicomMetadata = async (dicomPath) => {
         studyDate: new Date().toISOString().split('T')[0].replace(/-/g, ''),
         studyTime: '',
         modality: 'OT',
+        modality_raw: null,
         studyDescription: 'DICOM Study',
         seriesDescription: 'Uploaded DICOM',
         institutionName: '',
@@ -832,6 +962,7 @@ const getDicomMetadata = async (dicomPath) => {
       studyDate: new Date().toISOString().split('T')[0].replace(/-/g, ''),
       studyTime: '',
       modality: 'OT',
+      modality_raw: null,
       studyDescription: 'DICOM Study',
       seriesDescription: '',
       institutionName: '',

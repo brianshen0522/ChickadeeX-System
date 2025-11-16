@@ -183,18 +183,11 @@ const ReportDetailPage = () => {
 
             {canEdit && !report.finalized_at && !editing && (
               <button
-                onClick={() => {
-                  if (!report.study_instance_uid) {
-                    toast.error('This report is missing a study identifier.');
-                    return;
-                  }
-                  const demoUrl = `/demo?studyUid=${encodeURIComponent(report.study_instance_uid)}`;
-                  navigate(demoUrl);
-                }}
+                onClick={() => setEditing(true)}
                 className="inline-flex items-center px-3 py-1.5 border border-blue-200 text-sm font-medium rounded-lg text-blue-700 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
               >
                 <Edit className="h-4 w-4 mr-1.5" />
-                Edit in Demo
+                Edit Draft
               </button>
             )}
 
@@ -269,12 +262,8 @@ const ReportDetailPage = () => {
                 <h1 className="text-lg font-semibold text-gray-900">
                   {report.patient_name || `Patient ${report.patient_id}`}
                 </h1>
-                <div className="flex items-center space-x-2 text-sm text-gray-500">
-                  <span>{report.modality}</span>
-                  <span>•</span>
-                  <span className={report.finalized_at ? 'text-green-600' : 'text-yellow-600'}>
-                    {report.finalized_at ? 'Completed' : 'In Progress'}
-                  </span>
+                <div className={`text-sm ${report.finalized_at ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {report.finalized_at ? 'Completed' : 'In Progress'}
                 </div>
               </div>
             </div>
@@ -317,13 +306,6 @@ const ReportDetailPage = () => {
               <dd className="text-gray-900 mt-1">{report.patient_name}</dd>
             </div>
           )}
-          
-          <div>
-            <dt className="text-gray-500 font-medium">Modality</dt>
-            <dd className="text-gray-900 mt-1">
-              <span className="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs font-medium">{report.modality}</span>
-            </dd>
-          </div>
           
           {report.study_date && (
             <div>
@@ -466,7 +448,7 @@ const ReportDetailPage = () => {
             </div>
             <div className="px-6 py-5 space-y-3 text-sm text-gray-600">
               <p>
-                Permanently remove this draft from ChickadeeX? Linked Demo studies will be detached.
+                Permanently remove this draft from ChickadeeX? Linked study uploads will be detached.
               </p>
               <div className="bg-rose-50 border border-rose-100 rounded-lg px-3 py-2 text-xs text-rose-600">
                 This action cannot be undone.

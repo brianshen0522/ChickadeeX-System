@@ -15,7 +15,7 @@ import {
 
 const NAV_ITEMS = [
   { name: 'Home', href: '/', icon: LayoutDashboard, roles: ['admin', 'doctor', 'researcher', 'observer'] },
-  { name: 'Demo', href: '/demo', icon: UploadCloud, roles: ['doctor', 'observer'] },
+  { name: 'Demo', href: '/demo', icon: UploadCloud, roles: ['observer'] },
   {
     name: 'Reports',
     href: '/reports',

@@ -68,6 +68,12 @@ const HARDCODED_USERS = {
         name: 'Test User',
         role: 'observer',
         email: 'user@chickadeex.com'
+    },
+    'doc': {
+        password: 'doc123',
+        name: 'Doctor',
+        role: 'doctor',
+        email: 'doctor@chickadeex.com'
     }
 };
 

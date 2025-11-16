@@ -125,7 +125,7 @@ function AppRoutes() {
             <Route
               path="/demo"
               element={
-                <ProtectedRoute requiredRoles={['doctor', 'observer']}>
+                <ProtectedRoute requiredRoles={['observer']}>
                   <UploadViewerPage />
                 </ProtectedRoute>
               }
@@ -138,7 +138,14 @@ function AppRoutes() {
                 </ProtectedRoute>
               }
             />
-            <Route path="/viewer/uploads" element={<Navigate to="/demo" replace />} />
+            <Route
+              path="/viewer/uploads"
+              element={
+                <ProtectedRoute requiredRoles={['observer']}>
+                  <Navigate to="/demo" replace />
+                </ProtectedRoute>
+              }
+            />
             <Route
               path="/admin"
               element={

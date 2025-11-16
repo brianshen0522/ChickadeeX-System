@@ -124,6 +124,64 @@ const parseDicomMetadata = (value) => {
     return value;
 };
 
+const UNKNOWN_MODALITY_LABEL = 'Unknown';
+const DEFAULT_DICOM_MODALITY = 'OT';
+
+const extractBracketedValue = (value) => {
+    if (!value || typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+    const match = trimmed.match(/\[(.*?)\]/);
+    if (match && match[1]) {
+        const bracketValue = match[1].trim();
+        return bracketValue || trimmed;
+    }
+    return trimmed;
+};
+
+const normalizeModalityValue = (value, { uppercase = true } = {}) => {
+    if (!value || typeof value !== 'string') {
+        return null;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+        return null;
+    }
+    return uppercase ? trimmed.toUpperCase() : trimmed;
+};
+
+const extractDicomModality = (dicomMetadata) => {
+    if (!dicomMetadata) {
+        return null;
+    }
+    const raw = extractBracketedValue(dicomMetadata.modality_raw);
+    return normalizeModalityValue(
+        dicomMetadata.modality ||
+        dicomMetadata.Modality ||
+        raw
+    );
+};
+
+const resolveUploadModality = ({
+    isDicom,
+    dicomMetadata,
+    providedModality = null,
+    storedModality = null
+}) => {
+    if (isDicom) {
+        const metadataModality = extractDicomModality(dicomMetadata);
+        const stored = normalizeModalityValue(storedModality);
+        const provided = normalizeModalityValue(providedModality);
+        return metadataModality || stored || provided || DEFAULT_DICOM_MODALITY;
+    }
+
+    return UNKNOWN_MODALITY_LABEL;
+};
+
 const selectUploadRowsWithFallback = async (db, primaryQuery, params, fallbackQuery, mapRow) => {
     try {
         const result = await db.query(primaryQuery, params);
@@ -209,6 +267,11 @@ const mapUploadRow = (row, req) => {
         dicomMetadata,
         storedValue: row.study_instance_uid
     });
+    const resolvedModality = resolveUploadModality({
+        isDicom,
+        dicomMetadata,
+        storedModality: row.modality
+    });
 
     // For DICOM files we keep the original for viewer access and expose the converted JPEG separately.
     // For regular images, use the original file for both download and display.
@@ -223,7 +286,7 @@ const mapUploadRow = (row, req) => {
         originalFilename: row.original_filename,
         mimeType: row.mime_type,
         fileSize: Number(row.file_size),
-        modality: row.modality,
+        modality: resolvedModality,
         createdAt: row.created_at,
         status: row.status,
         type,
@@ -248,7 +311,7 @@ const mapUploadRow = (row, req) => {
 };
 
 router.use(authenticateToken);
-router.use(requireAnyRole(['doctor', 'admin', 'observer']));
+router.use(requireAnyRole(['observer']));
 
 router.post('/', upload.single('file'), async (req, res) => {
     if (!req.file) {
@@ -321,6 +384,11 @@ router.post('/', upload.single('file'), async (req, res) => {
                 storedValue: null
             })
             : null;
+        const resolvedModality = resolveUploadModality({
+            isDicom,
+            dicomMetadata,
+            providedModality: req.body?.modality
+        });
 
         let insertedRow;
         try {
@@ -335,7 +403,7 @@ router.post('/', upload.single('file'), async (req, res) => {
                     req.file.originalname,
                     mimeType,
                     req.file.size,
-                    req.body.modality || null,
+                    resolvedModality,
                     convertedImagePath,
                     resolvedMetadata,
                     isDicom,
@@ -365,7 +433,7 @@ router.post('/', upload.single('file'), async (req, res) => {
             const legacyRow = legacyResult.rows[0];
             insertedRow = {
                 ...legacyRow,
-                modality: req.body.modality || null,
+                modality: resolvedModality,
                 thumbnail_key: null,
                 converted_image_path: null,
                 is_dicom: isDicom,
@@ -799,7 +867,7 @@ router.post('/:uploadId/generate', async (req, res) => {
 
         const uploadRows = await selectUploadRowsWithFallback(
             db,
-            `SELECT id, original_filename, mime_type, stored_filename, converted_image_path, is_dicom, dicom_metadata, study_instance_uid
+            `SELECT id, original_filename, mime_type, stored_filename, converted_image_path, is_dicom, dicom_metadata, study_instance_uid, modality
              FROM uploads
              WHERE id = $1
                AND user_id = $2
@@ -818,7 +886,8 @@ router.post('/:uploadId/generate', async (req, res) => {
                 converted_image_path: null,
                 is_dicom: false,
                 dicom_metadata: null,
-                study_instance_uid: null
+                study_instance_uid: null,
+                modality: null
             })
         );
 
@@ -827,6 +896,7 @@ router.post('/:uploadId/generate', async (req, res) => {
         }
 
         const uploadRow = uploadRows[0];
+        const dicomMetadata = parseDicomMetadata(uploadRow.dicom_metadata);
         const originalFilePath = uploadRow.stored_filename
             ? path.join(UPLOAD_ROOT, uploadRow.stored_filename)
             : null;
@@ -837,7 +907,13 @@ router.post('/:uploadId/generate', async (req, res) => {
         let convertedMimeType = 'image/jpeg';
         let imagePath = null;
 
-        const isDicom = uploadRow.is_dicom || (uploadRow.mime_type === 'application/dicom');
+        const isDicom = uploadRow.is_dicom || (uploadRow.mime_type === 'application/dicom') || Boolean(dicomMetadata);
+        const resolvedModality = resolveUploadModality({
+            isDicom,
+            dicomMetadata,
+            storedModality: uploadRow.modality,
+            providedModality: req.body?.modality
+        });
         if (!isDicom) {
             convertedMimeType = uploadRow.mime_type || 'image/jpeg';
             if (originalFilePath && fs.existsSync(originalFilePath)) {
@@ -903,7 +979,7 @@ router.post('/:uploadId/generate', async (req, res) => {
 
         const payload = {
             studyDescription: req.body?.study_description || uploadRow.original_filename,
-            modality: req.body?.modality || null,
+            modality: resolvedModality,
             clinicalContext: req.body?.clinical_context || '',
             dicom: {
                 studyInstanceUID: uploadRow.study_instance_uid || uploadRow.id,
@@ -1025,6 +1101,12 @@ router.post('/:uploadId/reports', async (req, res) => {
             studyDescription = metadata.studyDescription || studyDescription;
         }
 
+        const reportModality = resolveUploadModality({
+            isDicom,
+            dicomMetadata,
+            storedModality: upload.modality
+        });
+
         const insertQuery = `
             INSERT INTO reports (id, study_instance_uid, patient_id, patient_name, study_date, study_description, modality, doctor_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -1038,7 +1120,7 @@ router.post('/:uploadId/reports', async (req, res) => {
             patientName,
             studyDate,
             studyDescription,
-            upload.modality || 'OT',
+            reportModality,
             req.user.id
         ]);
 

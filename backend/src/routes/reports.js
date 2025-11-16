@@ -2,6 +2,9 @@ const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
+const axios = require('axios');
+const AdmZip = require('adm-zip');
 
 const { getDB } = require('../database/connection');
 const { logger } = require('../utils/logger');
@@ -13,6 +16,7 @@ const { convertDicomToImage } = require('../utils/dicomConverter');
 
 const router = express.Router();
 const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
+const fsp = fs.promises;
 
 const toAbsoluteUploadPath = (filePath) => {
     if (!filePath) return null;
@@ -34,7 +38,7 @@ const resolveUploadPreview = async (db, studyInstanceUID, hostOrigin) => {
         );
 
         if (result.rows.length === 0) {
-            return null;
+            return await generatePacsPreview(db, studyInstanceUID, hostOrigin);
         }
 
         const upload = result.rows[0];
@@ -116,6 +120,123 @@ const resolveUploadPreview = async (db, studyInstanceUID, hostOrigin) => {
         logger.warn('Failed to resolve upload preview for report', {
             studyInstanceUID,
             error: error.message
+        });
+        return await generatePacsPreview(db, studyInstanceUID, hostOrigin);
+    }
+};
+
+const normalizePacsCredentials = (creds) => {
+    if (!creds) return {};
+    if (typeof creds === 'string') {
+        try {
+            return JSON.parse(creds);
+        } catch (_err) {
+            return {};
+        }
+    }
+    return creds;
+};
+
+const buildPacsHeaders = (authType, credentials, referer) => {
+    const headers = {
+        'Accept-Language': 'en-US,en;q=0.8',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
+        'User-Agent': 'Mozilla/5.0 (ChickadeeX PACS Bridge)'
+    };
+    if (referer) {
+        headers['Referer'] = referer;
+    }
+    const creds = normalizePacsCredentials(credentials);
+    if (authType === 'basic' && creds?.username) {
+        const token = Buffer.from(`${creds.username}:${creds.password || ''}`).toString('base64');
+        headers['Authorization'] = `Basic ${token}`;
+    } else if (authType === 'token' && creds?.token) {
+        headers['Authorization'] = `Bearer ${creds.token}`;
+    }
+    return headers;
+};
+
+const pickDicomEntry = (zipBuffer) => {
+    try {
+        const zip = new AdmZip(zipBuffer);
+        const entries = zip.getEntries();
+        if (!entries || !entries.length) {
+            return null;
+        }
+        return (
+            entries.find((entry) => !entry.isDirectory && /\.dcm$/i.test(entry.entryName)) ||
+            entries.find((entry) => !entry.isDirectory)
+        );
+    } catch (error) {
+        logger.warn('Failed to inspect PACS ZIP archive', { error: error.message });
+        return null;
+    }
+};
+
+const generatePacsPreview = async (db, studyInstanceUID, hostOrigin) => {
+    if (!studyInstanceUID) {
+        return null;
+    }
+    try {
+        const cfg = await db.query('SELECT pacs_url, auth_type, credentials, query_timeout FROM pacs_config LIMIT 1');
+        if (cfg.rows.length === 0 || !cfg.rows[0].pacs_url) {
+            return null;
+        }
+
+        const { pacs_url, auth_type, credentials, query_timeout } = cfg.rows[0];
+        const base = String(pacs_url || '').replace(/\/*$/, '');
+        const studiesBase = /\/studies$/i.test(base) ? base : `${base}/studies`;
+        const referer = `${base}/ui/imagefilemanagement`;
+        const headers = buildPacsHeaders(auth_type, credentials, referer);
+        headers['Accept'] = 'application/zip';
+        const timeout = Math.min(60000, Math.max(10000, (query_timeout || 60) * 1000));
+
+        const archiveResponse = await axios.get(
+            `${studiesBase}/${encodeURIComponent(studyInstanceUID)}`,
+            {
+                headers,
+                responseType: 'arraybuffer',
+                timeout
+            }
+        );
+
+        const dicomEntry = pickDicomEntry(Buffer.from(archiveResponse.data));
+        if (!dicomEntry) {
+            return null;
+        }
+
+        const tempDir = await fsp.mkdtemp(path.join(os.tmpdir(), 'pacs-preview-'));
+        const dicomFilename = `${studyInstanceUID.replace(/[^a-z0-9]/gi, '').slice(0, 16)}-${Date.now()}.dcm`;
+        const dicomPath = path.join(tempDir, dicomFilename);
+        await fsp.writeFile(dicomPath, dicomEntry.getData());
+
+        let convertedPath;
+        try {
+            convertedPath = await convertDicomToImage(dicomPath, tempDir, 'preview');
+        } catch (conversionError) {
+            logger.warn('Failed to convert PACS DICOM for preview', {
+                studyInstanceUID,
+                error: conversionError.message
+            });
+            return null;
+        }
+
+        const ext = path.extname(convertedPath).toLowerCase();
+        let imageMimeType = 'image/jpeg';
+        if (ext === '.png') imageMimeType = 'image/png';
+        else if (ext === '.webp') imageMimeType = 'image/webp';
+
+        return {
+            downloadUrl: `${hostOrigin}/api/dicom/studies/${encodeURIComponent(studyInstanceUID)}/download?format=dcm`,
+            imageUrl: '',
+            imageMimeType,
+            imagePath: convertedPath
+        };
+    } catch (error) {
+        logger.warn('Failed to build PACS preview for AI generation', {
+            studyInstanceUID,
+            error: error.message || error
         });
         return null;
     }
