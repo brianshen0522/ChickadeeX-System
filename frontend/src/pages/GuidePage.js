@@ -85,8 +85,8 @@ const GuidePage = () => {
       number: 5,
       title: 'Manage Drafts',
       titleZh: '管理草稿',
-      description: 'Organize all draft reports in one place. Search, filter by patient, modality, or date range.',
-      descriptionZh: '在一個地方整理所有報告草稿。依患者、檢查類型或日期範圍搜尋與篩選。',
+      description: 'Organize all draft reports in one place. Search, filter by patient, or date range.',
+      descriptionZh: '在一個地方整理所有報告草稿。依患者或日期範圍搜尋與篩選。',
       icon: FileText,
       color: 'teal',
       image: 'guide_5_drafts.png'
@@ -106,8 +106,8 @@ const GuidePage = () => {
       number: 7,
       title: 'Finalize Reports',
       titleZh: '完成報告',
-      description: 'Mark reports as finalized after final review. Finalized reports are locked and ready for distribution.',
-      descriptionZh: '最終審核後將報告標記為完成。已完成的報告將被鎖定並準備發送。',
+      description: 'Mark reports as finalized after final review.',
+      descriptionZh: '最終審核後將報告標記為完成。',
       icon: CheckCircle,
       color: 'indigo',
       image: 'guide_7_finalize.png'
@@ -401,7 +401,7 @@ const GuidePage = () => {
                           <div className="grid gap-4 md:grid-cols-2">
                             {/* Image */}
                             <div className="overflow-hidden rounded-lg border border-slate-200 bg-slate-50">
-                              <div className="aspect-video flex items-center justify-center">
+                              <div className="aspect-auto flex items-center justify-center">
                                 <img
                                   src={`/assets/guide/${step.image}`}
                                   alt={step.title}
@@ -436,23 +436,6 @@ const GuidePage = () => {
                                 </p>
                               </div>
 
-                              {/* Finalize Button */}
-                              <div className="space-y-2">
-                                <button
-                                  disabled
-                                  className="flex w-full items-center gap-2 rounded-lg border border-green-300 bg-green-50 px-4 py-2.5 text-sm font-semibold text-green-700 transition hover:bg-green-100"
-                                >
-                                  <CheckCircle className="h-4 w-4" />
-                                  Finalize
-                                </button>
-                                <p className="text-xs leading-relaxed text-slate-700">
-                                  Lock the report and mark it as finalized
-                                </p>
-                                <p className="text-xs leading-relaxed text-slate-500">
-                                  鎖定報告並標記為已完成
-                                </p>
-                              </div>
-
                               {/* Delete Button */}
                               <div className="space-y-2">
                                 <button
@@ -467,6 +450,23 @@ const GuidePage = () => {
                                 </p>
                                 <p className="text-xs leading-relaxed text-slate-500">
                                   從系統中永久刪除此報告
+                                </p>
+                              </div>
+
+                              {/* Finalize Button */}
+                              <div className="space-y-2">
+                                <button
+                                  type="button"
+                                  className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow hover:bg-emerald-500 focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                                >
+                                  <CheckCircle className="h-4 w-4" />
+                                  Finalize Report
+                                </button>
+                                <p className="text-xs leading-relaxed text-slate-700">
+                                  Lock the report and mark it as finalized
+                                </p>
+                                <p className="text-xs leading-relaxed text-slate-500">
+                                  鎖定報告並標記為已完成
                                 </p>
                               </div>
                             </div>
