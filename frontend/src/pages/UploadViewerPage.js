@@ -13,7 +13,10 @@ import {
   FileImage,
   Film,
   CheckCircle2,
-  FileText
+  FileText,
+  AlertTriangle,
+  Check,
+  X
 } from 'lucide-react';
 import { usePageContext } from '../contexts/PageContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -26,9 +29,9 @@ import {
   saveReportVersion,
   getUploadReport
 } from '../services/uploadService';
-import { createReportVersion } from '../services/reportService';
 import api from '../services/api';
 import { resolveBlueLightStartUrl } from '../utils/bluelight';
+import { createReportVersion } from '../services/reportService';
 
 const formatTimestamp = (timestamp, fallback = '--') => {
   if (!timestamp) return fallback;
@@ -78,6 +81,9 @@ const UploadViewerPage = () => {
     error: null,
     lastSavedAt: null
   });
+  const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
+  const [duplicateVersion, setDuplicateVersion] = useState(null);
+  const [pendingSave, setPendingSave] = useState(null);
 
   const [viewerFrameKey, setViewerFrameKey] = useState(0);
 
@@ -99,6 +105,26 @@ const UploadViewerPage = () => {
   const savedIndicatorTimer = useRef(null);
   const [viewerLoading, setViewerLoading] = useState(false);
   const isObserver = user?.role === 'observer';
+
+  const normalizeContent = useCallback((text) => (text || '').trim().replace(/\s+/g, ' ').toLowerCase(), []);
+
+  const findDuplicateVersion = useCallback(
+    (findingsDraft, impressionDraft) => {
+      const currentFindings = normalizeContent(findingsDraft);
+      const currentImpression = normalizeContent(impressionDraft);
+      if (!currentFindings && !currentImpression) {
+        return null;
+      }
+      return (
+        reportState.versions.find(
+          (version) =>
+            normalizeContent(version.findings) === currentFindings &&
+            normalizeContent(version.impression) === currentImpression
+        ) || null
+      );
+    },
+    [reportState.versions, normalizeContent]
+  );
 
   // Drag and drop state
   const [isDragOver, setIsDragOver] = useState(false);
@@ -634,6 +660,13 @@ const UploadViewerPage = () => {
     return report.id;
   };
 
+  const performVersionSave = async (reportId, payload) => {
+    if (isObserver) {
+      return saveReportVersion(selectedUpload.id, reportId, payload);
+    }
+    return createReportVersion(reportId, payload);
+  };
+
   const upsertVersionLocally = (version) => {
     setReportState((prev) => {
       const existing = prev.versions.filter((v) => v.version_no !== version.version_no);
@@ -753,25 +786,33 @@ const UploadViewerPage = () => {
 
       let savedVersion = null;
       if (reportState.hasUnsavedChanges) {
-        if (isObserver) {
-          savedVersion = await saveReportVersion(selectedUpload.id, reportId, {
-            findings: reportState.findings,
-            impression: reportState.impression
-          });
-        } else {
-          savedVersion = await createReportVersion(reportId, {
-            findings: reportState.findings,
-            impression: reportState.impression
-          });
+        const payload = {
+          findings: reportState.findings,
+          impression: reportState.impression
+        };
+        const duplicate = findDuplicateVersion(payload.findings, payload.impression);
+        if (duplicate) {
+          setPendingSave(payload);
+          setDuplicateVersion(duplicate);
+          setShowDuplicateDialog(true);
+          setReportState((prev) => ({ ...prev, isSaving: false }));
+          return;
         }
+        savedVersion = await performVersionSave(reportId, payload);
         upsertVersionLocally(savedVersion);
+        setReportState((prev) => ({
+          ...prev,
+          hasUnsavedChanges: false,
+          reportId,
+          lastSavedAt: savedVersion?.created_at ? new Date(savedVersion.created_at) : new Date()
+        }));
       }
 
       setReportState((prev) => ({
         ...prev,
         isSaving: false,
         hasUnsavedChanges: false,
-        lastSavedAt: savedVersion?.created_at ? new Date(savedVersion.created_at) : prev.lastSavedAt || new Date()
+        lastSavedAt: prev.lastSavedAt || new Date()
       }));
       setShowSavedIndicator(true);
       savedIndicatorTimer.current = setTimeout(() => {
@@ -821,6 +862,54 @@ const UploadViewerPage = () => {
     setShowSavedIndicator(false);
     setStudySummary(value);
     setMetadataDirty(true);
+  };
+
+  const handleConfirmDuplicateSave = async () => {
+    if (!pendingSave) {
+      setShowDuplicateDialog(false);
+      return;
+    }
+    try {
+      setReportState((prev) => ({ ...prev, isSaving: true }));
+      let reportId = reportState.reportId;
+      if (!reportId) {
+        reportId = await ensureReportExists();
+        setReportState((prev) => ({ ...prev, reportId }));
+      }
+      const saved = await performVersionSave(reportId, pendingSave);
+      upsertVersionLocally(saved);
+      setReportState((prev) => ({
+        ...prev,
+        isSaving: false,
+        hasUnsavedChanges: false,
+        reportId,
+        lastSavedAt: saved.created_at ? new Date(saved.created_at) : new Date()
+      }));
+      setPendingSave(null);
+      setDuplicateVersion(null);
+      setShowDuplicateDialog(false);
+      setShowSavedIndicator(true);
+      savedIndicatorTimer.current = setTimeout(() => {
+        setShowSavedIndicator(false);
+        savedIndicatorTimer.current = null;
+      }, 2400);
+      toast.success('Report saved');
+    } catch (error) {
+      setReportState((prev) => ({
+        ...prev,
+        isSaving: false,
+        error: error?.response?.data?.error || 'Failed to save report'
+      }));
+      toast.error('Failed to save report');
+      console.error('Save failed:', error);
+    }
+  };
+
+  const handleCancelDuplicateSave = () => {
+    setShowDuplicateDialog(false);
+    setPendingSave(null);
+    setDuplicateVersion(null);
+    setReportState((prev) => ({ ...prev, isSaving: false }));
   };
 
   const handleVersionChange = (event) => {
@@ -1279,13 +1368,53 @@ const UploadViewerPage = () => {
   );
 
   return (
-    <div
-      className="flex h-screen flex-col overflow-y-auto overflow-x-hidden px-5 py-2 relative"
-      onDragEnter={handleDragEnter}
-      onDragLeave={handleDragLeave}
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
+    <>
+      {showDuplicateDialog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/60 px-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="mb-4 flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-100 text-amber-600">
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">Duplicate content detected</h3>
+                <p className="text-xs text-slate-500">
+                  Matches version {duplicateVersion?.version_no}
+                </p>
+              </div>
+            </div>
+            <p className="rounded-lg border border-amber-100 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              The findings and impression match an existing version. Do you still want to save it as a new version?
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={handleCancelDuplicateSave}
+                className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-slate-50"
+              >
+                <X className="h-4 w-4" />
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmDuplicateSave}
+                disabled={reportState.isSaving}
+                className="inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-1.5 text-sm font-semibold text-white transition hover:bg-amber-500 disabled:opacity-50"
+              >
+                {reportState.isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      <div
+        className="flex h-screen flex-col overflow-y-auto overflow-x-hidden px-5 py-2 relative"
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
       {isUploading && (
         <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-4">
           <div className="flex items-center gap-2 rounded-full bg-slate-950/80 px-4 py-2 text-sm font-semibold text-white shadow-lg">
@@ -1490,7 +1619,8 @@ const UploadViewerPage = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 };
 
