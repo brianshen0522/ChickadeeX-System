@@ -5,7 +5,6 @@ import companyLogo from '../../assets/logo.svg';
 import { useAuth } from '../../contexts/AuthContext';
 
 const Header = () => {
-  const { systemHealth, pacsHealth } = useHealthStatus();
   const { user } = useAuth();
 
   const getStatusColors = (health) => {
@@ -27,8 +26,9 @@ const Header = () => {
   };
 
   const role = (user?.role || '').toLowerCase();
-  const pacsColors = getStatusColors(pacsHealth);
   const shouldShowPacs = role === 'admin';
+  const { systemHealth, pacsHealth } = useHealthStatus(shouldShowPacs);
+  const pacsColors = getStatusColors(pacsHealth);
   
   return (
     <div className="relative z-10 flex-shrink-0 flex h-16 bg-gradient-to-r from-primary-50 to-medical-off-white shadow-medical border-b border-primary-200">

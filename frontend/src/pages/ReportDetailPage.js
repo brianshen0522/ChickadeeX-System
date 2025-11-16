@@ -109,19 +109,31 @@ const ReportDetailPage = () => {
     if (!report?.study_instance_uid) return '';
     const baseUrl = resolveBlueLightStartUrl();
     if (!baseUrl) return '';
+
     const params = new URLSearchParams();
     params.set('StudyInstanceUID', report.study_instance_uid);
     if (report.patient_name) params.set('PatientName', report.patient_name);
     if (report.patient_id) params.set('PatientID', report.patient_id);
-    if (typeof window !== 'undefined') {
-      const origin = `${window.location.protocol}//${window.location.host}`;
-      params.set(
-        'dicomurl',
-        `${origin}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download?format=dcm`
-      );
+
+    if (user?.role === 'doctor') {
+      if (typeof window !== 'undefined') {
+        const origin = `${window.location.protocol}//${window.location.host}`;
+        params.set(
+          'dicomurl',
+          `${origin}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download?format=dcm`
+        );
+      }
+    } else if (user?.role === 'observer') {
+      if (report?.preview_image_url) {
+        params.set('imageurl', report.preview_image_url);
+      } else if (report?.preview_upload_id && typeof window !== 'undefined') {
+        const origin = `${window.location.protocol}//${window.location.host}`;
+        params.set('imageurl', `${origin}/api/uploads/${report.preview_upload_id}/converted`);
+      }
     }
+
     return `${baseUrl}?${params.toString()}`;
-  }, [report?.study_instance_uid, report?.patient_id, report?.patient_name]);
+  }, [report?.study_instance_uid, report?.patient_id, report?.patient_name, report?.preview_image_url, report?.preview_upload_id, user?.role]);
 
   useEffect(() => {
     if (!bluelightEmbedUrl) {
@@ -203,6 +215,14 @@ const ReportDetailPage = () => {
             {canEdit && !report.finalized_at && (
               <button
                 onClick={() => {
+                  if (user?.role === 'observer') {
+                    if (report?.preview_upload_id) {
+                      navigate(`/demo?uploadId=${report.preview_upload_id}`);
+                    } else {
+                      toast.error('Source upload not available');
+                    }
+                    return;
+                  }
                   if (!report?.study_instance_uid) {
                     toast.error('Study UID missing for this report');
                     return;
@@ -453,6 +473,14 @@ const ReportDetailPage = () => {
             {canEdit && (
               <button
                 onClick={() => {
+                  if (user?.role === 'observer') {
+                    if (report?.preview_upload_id) {
+                      navigate(`/demo?uploadId=${report.preview_upload_id}`);
+                    } else {
+                      toast.error('Source upload not available');
+                    }
+                    return;
+                  }
                   if (!report?.study_instance_uid) {
                     toast.error('Study UID missing for this report');
                     return;

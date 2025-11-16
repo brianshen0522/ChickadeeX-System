@@ -502,15 +502,14 @@ const ReportsPage = () => {
                           </div>
                         </div>
 
-                        <div className="flex flex-shrink-0 items-center justify-end gap-2 sm:gap-3">
+                        <div className="flex flex-shrink-0 items-center justify-end gap-2 sm:gap-3 self-center">
                           <Link
                             to={`/reports/${report.id}`}
-                            className="flex h-9 w-9 items-center justify-center rounded-md border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors leading-none"
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-blue-200 text-blue-600 bg-blue-50 hover:bg-blue-100 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors leading-none p-0"
                             aria-label="View report"
                             title="View report"
                           >
                             <Eye className="h-4 w-4" />
-                            <span className="sr-only">View</span>
                           </Link>
 
                           {canDelete && (
@@ -518,7 +517,7 @@ const ReportsPage = () => {
                               type="button"
                               onClick={() => openDeleteModal(report)}
                               disabled={deletingId === report.id}
-                              className="flex h-9 w-9 items-center justify-center rounded-md border border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+                              className="inline-flex h-9 w-9 items-center justify-center rounded-lg border border-rose-200 text-rose-600 bg-rose-50 hover:bg-rose-100 focus:outline-none focus:ring-2 focus:ring-rose-500 transition-colors leading-none p-0 disabled:opacity-60 disabled:cursor-not-allowed"
                               aria-label="Delete report"
                               title="Delete report"
                             >
@@ -527,7 +526,6 @@ const ReportsPage = () => {
                               ) : (
                                 <Trash2 className="h-4 w-4" />
                               )}
-                              <span className="sr-only">Delete</span>
                             </button>
                           )}
 

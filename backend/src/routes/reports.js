@@ -110,7 +110,8 @@ const resolveUploadPreview = async (db, studyInstanceUID, hostOrigin) => {
             downloadUrl,
             imageUrl,
             imageMimeType,
-            imagePath: imagePath || ''
+            imagePath: imagePath || '',
+            uploadId: upload.id
         };
     } catch (error) {
         if (error.code === '42P01') {
@@ -231,7 +232,8 @@ const generatePacsPreview = async (db, studyInstanceUID, hostOrigin) => {
             downloadUrl: `${hostOrigin}/api/dicom/studies/${encodeURIComponent(studyInstanceUID)}/download?format=dcm`,
             imageUrl: '',
             imageMimeType,
-            imagePath: convertedPath
+            imagePath: convertedPath,
+            uploadId: null
         };
     } catch (error) {
         logger.warn('Failed to build PACS preview for AI generation', {
@@ -722,12 +724,24 @@ router.get('/:reportId',
                 return res.status(404).json({ error: 'Report not found' });
             }
 
+            const reportRow = result.rows[0];
+            let previewMeta = null;
+            if (reportRow.study_instance_uid) {
+                const hostOrigin = `${req.protocol}://${req.get('host')}`;
+                previewMeta = await resolveUploadPreview(db, reportRow.study_instance_uid, hostOrigin);
+            }
+
             await createAuditLog(req.user.id, 'report_viewed', 'report', reportId, {
                 ip: req.ip,
                 user_agent: req.get('User-Agent')
             });
 
-            res.json(result.rows[0]);
+            res.json({
+                ...reportRow,
+                preview_image_url: previewMeta?.imageUrl || null,
+                preview_download_url: previewMeta?.downloadUrl || null,
+                preview_upload_id: previewMeta?.uploadId || null
+            });
         } catch (error) {
             logger.error('Get report error:', error);
             res.status(500).json({ error: 'Failed to retrieve report' });

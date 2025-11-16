@@ -69,20 +69,24 @@ const stopPolling = () => {
   }
 };
 
-export const useHealthStatus = () => {
+export const useHealthStatus = (enabled = true) => {
   const [localState, setLocalState] = useState(sharedState);
 
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     subscribers.add(setLocalState);
     startPolling();
     return () => {
       subscribers.delete(setLocalState);
       stopPolling();
     };
-  }, []);
+  }, [enabled]);
 
   return {
-    ...localState,
-    refreshHealth: performHealthCheck
+    systemHealth: enabled ? localState.systemHealth : defaultSystemHealth,
+    pacsHealth: enabled ? localState.pacsHealth : defaultPacsHealth,
+    refreshHealth: enabled ? performHealthCheck : async () => sharedState
   };
 };

@@ -22,7 +22,6 @@ const Layout = ({ children }) => {
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const { pageTitle, breadcrumbs = [] } = usePageContext();
-  const { pacsHealth } = useHealthStatus();
   const { user, logout } = useAuth();
   const location = useLocation();
   const navigate = useNavigate();
@@ -51,6 +50,8 @@ const Layout = ({ children }) => {
     }
   };
 
+  const showPacsStatus = user?.role === 'admin';
+  const { pacsHealth } = useHealthStatus(showPacsStatus);
   const pacsColors = getStatusColors(pacsHealth);
   const routeLabels = useMemo(() => ({
     '/': 'Home',
@@ -140,7 +141,6 @@ const Layout = ({ children }) => {
 
   const isAdmin = user?.role === 'admin';
   const isObserver = user?.role === 'observer';
-  const showPacsStatus = user?.role === 'admin';
 
   useEffect(() => {
     const handleClickAway = (event) => {

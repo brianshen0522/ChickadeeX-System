@@ -24,11 +24,13 @@ import { useHealthStatus } from '../hooks/useHealthStatus';
 
 const DashboardPage = () => {
   const { user } = useAuth();
+  const role = user?.role;
+  const doctorId = user?.id;
+  const { pacsHealth } = useHealthStatus(role === 'doctor');
   const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
   const [loadingMetrics, setLoadingMetrics] = useState(false);
   const [adminMetrics, setAdminMetrics] = useState(null);
   const [doctorMetrics, setDoctorMetrics] = useState(null);
-  const { pacsHealth } = useHealthStatus();
 
   useEffect(() => {
     setPageTitle('Home');
@@ -38,8 +40,6 @@ const DashboardPage = () => {
     ]);
   }, [setPageDescription, setPageTitle, setBreadcrumbs]);
 
-  const role = user?.role;
-  const doctorId = user?.id;
   const shouldShowMetrics = role === 'admin' || role === 'doctor';
 
   useEffect(() => {
