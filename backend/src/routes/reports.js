@@ -824,7 +824,7 @@ router.post('/:reportId/generate-preview',
             const db = getDB();
             
             // Check if any LLM models are available and enabled
-            const llmCheckRes = await db.query(`SELECT COUNT(*) as count FROM llm_configs WHERE enabled = true AND api_key IS NOT NULL`);
+            const llmCheckRes = await db.query(`SELECT COUNT(*) as count FROM llm_configs WHERE enabled = true`);
             const availableModels = parseInt(llmCheckRes.rows[0]?.count || 0);
             
             if (availableModels === 0) {

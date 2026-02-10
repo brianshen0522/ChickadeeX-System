@@ -25,5 +25,12 @@ Thumbs.db
 *.swp
 *.swo
 
+# Uploads (keep the directory structure via .gitkeep)
+backend/uploads/*
+!backend/uploads/.gitkeep
+
+# Nginx / PHP logs
+nginx_config/log/
+
 # Docker
 docker-data/

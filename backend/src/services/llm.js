@@ -71,7 +71,7 @@ const generateAIReport = async (params) => {
             SELECT id, name, model_name, api_url, api_key, prompt, priority, 
                    max_tokens, temperature, top_p
             FROM llm_configs 
-            WHERE enabled = true AND api_key IS NOT NULL
+            WHERE enabled = true
             ORDER BY priority ASC
         `;
         
@@ -189,6 +189,8 @@ Generate a medical report with findings and impression in the required JSON form
         return await callOpenAIAPI(config, systemPrompt, userPrompt, imageDescriptor);
     } else if (apiUrl.includes('openrouter.ai') || apiUrl.includes('anthropic.com')) {
         return await callClaudeAPI(config, systemPrompt, userPrompt, imageDescriptor);
+    } else if (/:(11434|11435)\b/.test(apiUrl) || apiUrl.includes('/api/chat') || apiUrl.includes('/api/generate')) {
+        return await callOllamaAPI(config, systemPrompt, userPrompt, imageDescriptor);
     } else {
         return await callGenericAPI(config, systemPrompt, userPrompt, imageDescriptor);
     }
@@ -415,6 +417,86 @@ const callClaudeAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
 };
 
 /**
+ * Call Ollama API (local LLM)
+ */
+const callOllamaAPI = async (config, systemPrompt, userPrompt, imageDescriptor = {}) => {
+    try {
+        const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
+
+        // Determine if using /api/chat (native) or OpenAI-compatible endpoint
+        let apiUrl = config.api_url;
+        const isNativeChat = apiUrl.includes('/api/chat') || apiUrl.includes('/api/generate');
+
+        // If URL is just a base like http://host:11434, default to /api/chat
+        if (!isNativeChat && !apiUrl.includes('/v1/')) {
+            apiUrl = apiUrl.replace(/\/+$/, '') + '/api/chat';
+        }
+
+        // Prepare image base64 (strip data: prefix if present)
+        let images = [];
+        if (imageUrl || localPath || base64) {
+            const base64Image = await fetchImageAsBase64({ url: imageUrl, localPath, base64 });
+            images = [base64Image];
+        }
+
+        // OpenAI-compatible /v1/chat/completions path
+        if (apiUrl.includes('/v1/')) {
+            let userContent = userPrompt;
+            if (images.length > 0) {
+                const dataUrl = `data:${mimeType};base64,${images[0]}`;
+                userContent = [
+                    { type: 'text', text: userPrompt },
+                    { type: 'image_url', image_url: { url: dataUrl } }
+                ];
+            }
+            const payload = {
+                model: config.model_name,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userContent }
+                ],
+                stream: false
+            };
+            if (config.temperature != null) payload.temperature = parseFloat(config.temperature);
+            if (config.max_tokens != null) payload.max_tokens = parseInt(config.max_tokens);
+            if (config.top_p != null) payload.top_p = parseFloat(config.top_p);
+
+            const response = await axios.post(apiUrl, payload, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: 120000
+            });
+            const content = response.data.choices?.[0]?.message?.content || '';
+            return parseResponse(content);
+        }
+
+        // Native Ollama /api/chat endpoint
+        const payload = {
+            model: config.model_name,
+            messages: [
+                { role: 'system', content: systemPrompt },
+                { role: 'user', content: userPrompt, images: images.length > 0 ? images : undefined }
+            ],
+            stream: false,
+            options: {}
+        };
+        if (config.temperature != null) payload.options.temperature = parseFloat(config.temperature);
+        if (config.max_tokens != null) payload.options.num_predict = parseInt(config.max_tokens);
+        if (config.top_p != null) payload.options.top_p = parseFloat(config.top_p);
+
+        const response = await axios.post(apiUrl, payload, {
+            headers: { 'Content-Type': 'application/json' },
+            timeout: 120000
+        });
+
+        const content = response.data.message?.content || '';
+        return parseResponse(content);
+
+    } catch (error) {
+        throw new Error(`Ollama API call failed: ${error.message}`);
+    }
+};
+
+/**
  * Call generic OpenAI-compatible API
  */
 const callGenericAPI = async (config, systemPrompt, userPrompt, imageDescriptor = {}) => {
@@ -522,6 +604,7 @@ const getProviderName = (url) => {
     if (urlLower.includes('generativelanguage.googleapis.com')) return 'Google Gemini';
     if (urlLower.includes('openrouter.ai')) return 'OpenRouter';
     if (urlLower.includes('anthropic.com')) return 'Anthropic';
+    if (/:(11434|11435)\b/.test(urlLower) || urlLower.includes('/api/chat') || urlLower.includes('/api/generate')) return 'Ollama';
     return 'Custom API';
 };
 

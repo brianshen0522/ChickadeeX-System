@@ -564,6 +564,10 @@ router.post('/llm-models', async (req, res) => {
             // Use OpenRouter as OpenAI-compatible aggregator for Anthropic models
             url = 'https://openrouter.ai/api/v1/models';
             if (actualApiKey) headers['Authorization'] = `Bearer ${actualApiKey}`;
+        } else if (provider === 'ollama') {
+            if (!endpoint) return res.status(400).json({ error: 'endpoint is required for Ollama provider' });
+            const base = String(endpoint).replace(/\/+$/, '');
+            url = `${base}/api/tags`;
         } else if (provider === 'other') {
             if (!endpoint) return res.status(400).json({ error: 'endpoint is required for other provider' });
             const base = String(endpoint).replace(/\/+$/, '');
@@ -597,6 +601,9 @@ router.post('/llm-models', async (req, res) => {
             models = Array.isArray(data.data) ? data.data.map(m => ({ id: m.id })) : [];
             // Prefer only anthropic models
             models = models.filter(m => /^anthropic\//i.test(m.id));
+        } else if (provider === 'ollama') {
+            // Ollama /api/tags shape: { models: [{ name, ... }] }
+            models = Array.isArray(data.models) ? data.models.map(m => ({ id: m.name || m.model })) : [];
         } else {
             // Try to normalize common shapes
             if (Array.isArray(data.data)) models = data.data.map(m => ({ id: m.id || m.name }));
@@ -896,7 +903,7 @@ router.post('/llm-configs/:configId/test',
         } catch (error) {
             const message = extractLLMTestError(error);
             logger.error('LLM config test failed:', {
-                configId,
+                configId: req.params.configId,
                 error: message,
                 details: error?.response?.data || error.message || error
             });

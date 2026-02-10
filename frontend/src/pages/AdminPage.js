@@ -615,13 +615,13 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
                         )}
                       </div>
                       <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-gray-50 text-gray-700 border-gray-200">
-                        {/openai\.com/i.test(config.api_url) ? 'GPT' : /generativelanguage\./i.test(config.api_url) ? 'Gemini' : /openrouter\.ai/i.test(config.api_url) ? 'Claude' : 'Other'}
+                        {/openai\.com/i.test(config.api_url) ? 'GPT' : /generativelanguage\./i.test(config.api_url) ? 'Gemini' : /openrouter\.ai/i.test(config.api_url) ? 'Claude' : /:1143[45]\b|\/api\/chat|\/api\/generate/i.test(config.api_url) ? 'Ollama' : 'Other'}
                       </span>
                     </div>
                     {config.name && (
                       <div className="text-xs text-gray-500 truncate">Model: {config.model_name}</div>
                     )}
-                    {!/openai\.com|generativelanguage\.|openrouter\.ai/i.test(config.api_url) && (
+                    {!/openai\.com|generativelanguage\.|openrouter\.ai/i.test(config.api_url) && config.api_url && (
                       <div className="text-xs text-gray-500 truncate mt-1">{config.api_url}</div>
                     )}
                   </div>
@@ -676,7 +676,11 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
                         try {
                           const res = await testLLMConfig(config.id);
                           setLlmHealth(prev => ({...prev, [config.id]: res}));
-                          toast.success(`Model healthy! Latency: ${res.latency_ms}ms`);
+                          if (res.healthy) {
+                            toast.success(`Model healthy! Latency: ${res.latency_ms}ms`);
+                          } else {
+                            toast.error(res.error || 'Model test failed');
+                          }
                         } catch (e) {
                           setLlmHealth(prev => ({...prev, [config.id]: { healthy: false, error: e.message }}));
                           toast.error('Model test failed');
@@ -1242,6 +1246,7 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
     if (url.includes('generativelanguage.googleapis.com')) return 'gemini';
     if (url.includes('openrouter.ai')) return 'claude';
     if (url.includes('openai.com')) return 'gpt';
+    if (/:1143[45]\b/.test(url) || url.includes('/api/chat') || url.includes('/api/generate')) return 'ollama';
     return 'other';
   });
 
@@ -1280,6 +1285,11 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
       placeholderKey: 'sk-or-... (OpenRouter key)',
       modelHint: 'e.g., anthropic/claude-3.5-sonnet (OpenRouter id)',
     },
+    ollama: {
+      api_url: 'http://host.docker.internal:11434/api/chat',
+      placeholderKey: 'Not required (leave empty)',
+      modelHint: 'e.g., llava, llama3.2-vision, bakllava',
+    },
     other: {
       api_url: '',
       placeholderKey: 'Authorization: Bearer <token> (key:value)',
@@ -1305,7 +1315,7 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
   const handleSave = async () => {
     if (!form.model_name) { alert('Model is required'); return; }
     if (!form.priority || form.priority < 1) { alert('Priority must be >= 1'); return; }
-    if (provider === 'other' && !form.api_url) { alert('API endpoint is required'); return; }
+    if ((provider === 'other' || provider === 'ollama') && !form.api_url) { alert('API endpoint is required'); return; }
 
     const payload = {
       name: form.name || null,
@@ -1355,6 +1365,7 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
                 <option value="gpt">GPT</option>
                 <option value="gemini">Gemini</option>
                 <option value="claude">Claude</option>
+                <option value="ollama">Ollama (Local)</option>
                 <option value="other">Other</option>
               </select>
             </div>
@@ -1385,11 +1396,11 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
                 </div>
               )}
             </div>
-            {provider === 'other' && (
+            {(provider === 'other' || provider === 'ollama') && (
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">API Endpoint</label>
-                <input type="url" value={form.api_url} onChange={(e)=>setForm({...form, api_url: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder="https://your-endpoint" />
-                <p className="text-xs text-gray-500 mt-1">Model list fetched from &lt;endpoint&gt;/models</p>
+                <label className="block text-sm font-medium text-gray-700 mb-2">{provider === 'ollama' ? 'Ollama URL' : 'API Endpoint'}</label>
+                <input type="url" value={form.api_url} onChange={(e)=>setForm({...form, api_url: e.target.value})} className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent" placeholder={provider === 'ollama' ? 'http://host.docker.internal:11434' : 'https://your-endpoint'} />
+                <p className="text-xs text-gray-500 mt-1">{provider === 'ollama' ? 'Use host.docker.internal to reach Ollama on the host machine from Docker' : 'Model list fetched from <endpoint>/models'}</p>
               </div>
             )}
           </div>
@@ -1427,12 +1438,12 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
                       setModels([]);
                       try {
                         const apiKey = form.api_key || (hasStoredKey ? 'USE_STORED_KEY' : '');
-                        if (!apiKey) {
+                        if (!apiKey && provider !== 'ollama') {
                           setModelError('API key is required. Please enter an API key or configure an LLM first.');
                           setLoadingModels(false);
                           return;
                         }
-                        const r = await listProviderModels(provider, apiKey, provider === 'other' ? form.api_url : undefined);
+                        const r = await listProviderModels(provider, apiKey || '', (provider === 'other' || provider === 'ollama') ? form.api_url : undefined);
                         const items = Array.isArray(r.models) ? r.models : [];
                         setModels(items);
                         if (!form.model_name && items.length) setForm({ ...form, model_name: items[0].id });
