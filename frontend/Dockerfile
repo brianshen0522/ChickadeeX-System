@@ -1,5 +1,5 @@
 # Build stage
-FROM node:18-alpine as build
+FROM node:18.20-alpine3.19 as build
 
 WORKDIR /app
 
@@ -32,7 +32,7 @@ ENV REACT_APP_KEYCLOAK_PORT=${REACT_APP_KEYCLOAK_PORT}
 RUN npm run build
 
 # Production stage
-FROM nginx:alpine
+FROM nginx:1.27-alpine
 
 # Copy custom nginx config
 COPY nginx.conf /etc/nginx/conf.d/default.conf

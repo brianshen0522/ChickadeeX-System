@@ -2,6 +2,8 @@ const fs = require('fs');
 const axios = require('axios');
 const { getDB } = require('../database/connection');
 const { logger } = require('../utils/logger');
+const { validateExternalUrl } = require('../utils/urlValidator');
+const { decryptSecret } = require('../utils/crypto');
 
 /**
  * Main function to generate AI report
@@ -9,6 +11,8 @@ const { logger } = require('../utils/logger');
 const imageCache = new Map();
 
 const fsp = fs.promises;
+
+const LLM_TIMEOUT_MS = 999999999;
 
 const fetchImageAsBase64 = async (source) => {
     const descriptor = typeof source === 'string' ? { url: source } : (source || {});
@@ -41,9 +45,10 @@ const fetchImageAsBase64 = async (source) => {
 
     if (url) {
         try {
+            await validateExternalUrl(url);
             const response = await axios.get(url, {
                 responseType: 'arraybuffer',
-                timeout: 15000,
+                timeout: LLM_TIMEOUT_MS,
                 headers: {
                     'Accept': 'image/png,image/jpeg,image/webp,image/*'
                 }
@@ -84,9 +89,11 @@ const generateAIReport = async (params) => {
         // Try each LLM in priority order
         for (const config of result.rows) {
             try {
+                const decryptedKey = decryptSecret(config.api_key);
+                const configWithKey = { ...config, api_key: decryptedKey };
                 logger.info(`Trying LLM: ${config.name} (priority ${config.priority})`);
                 
-                const response = await callLLM(config, {
+                const response = await callLLM(configWithKey, {
                     studyDescription,
                     modality,
                     clinicalContext,
@@ -203,7 +210,7 @@ const callGeminiAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
     try {
         const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
         // Ensure correct URL format for Gemini
-        let apiUrl = config.api_url;
+        let apiUrl = String(config.api_url || '').trim();
         if (!apiUrl.includes(':generateContent')) {
             // Fix common URL format issues
             if (apiUrl.includes('gemini-2.0-flash')) {
@@ -249,7 +256,7 @@ const callGeminiAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
                 'Content-Type': 'application/json',
                 'X-goog-api-key': config.api_key
             },
-            timeout: 30000
+            timeout: LLM_TIMEOUT_MS
         });
         
         if (response.status !== 200) {
@@ -314,7 +321,7 @@ const callOpenAIAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${config.api_key}`
             },
-            timeout: 30000
+            timeout: LLM_TIMEOUT_MS
         });
         
         const content = response.data.choices?.[0]?.message?.content || '';
@@ -371,7 +378,7 @@ const callClaudeAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
                     'x-api-key': config.api_key,
                     'anthropic-version': '2023-06-01'
                 },
-                timeout: 30000
+                timeout: LLM_TIMEOUT_MS
             });
 
             const content = Array.isArray(response.data?.content)
@@ -405,7 +412,7 @@ const callClaudeAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${config.api_key}`
             },
-            timeout: 30000
+            timeout: LLM_TIMEOUT_MS
         });
 
         const content = response.data.choices?.[0]?.message?.content || '';
@@ -423,13 +430,14 @@ const callOllamaAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
     try {
         const { url: imageUrl, mimeType = 'image/jpeg', localPath, base64 } = imageDescriptor;
 
-        // Determine if using /api/chat (native) or OpenAI-compatible endpoint
-        let apiUrl = config.api_url;
-        const isNativeChat = apiUrl.includes('/api/chat') || apiUrl.includes('/api/generate');
+        // Determine if using /api/chat, /api/generate, or OpenAI-compatible endpoint
+        let apiUrl = String(config.api_url || '').trim();
+        const isNativeGenerate = apiUrl.includes('/api/generate');
+        const isNativeChat = apiUrl.includes('/api/chat');
 
-        // If URL is just a base like http://host:11434, default to /api/chat
-        if (!isNativeChat && !apiUrl.includes('/v1/')) {
-            apiUrl = apiUrl.replace(/\/+$/, '') + '/api/chat';
+        // If URL is just a base like http://host:11434, default to /api/generate
+        if (!isNativeGenerate && !isNativeChat && !apiUrl.includes('/v1/')) {
+            apiUrl = apiUrl.replace(/\/+$/, '') + '/api/generate';
         }
 
         // Prepare image base64 (strip data: prefix if present)
@@ -449,33 +457,68 @@ const callOllamaAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
                     { type: 'image_url', image_url: { url: dataUrl } }
                 ];
             }
-            const payload = {
-                model: config.model_name,
-                messages: [
-                    { role: 'system', content: systemPrompt },
-                    { role: 'user', content: userContent }
-                ],
-                stream: false
-            };
+
+            if (apiUrl.endsWith('/v1') || apiUrl.endsWith('/v1/')) {
+                apiUrl = `${apiUrl.replace(/\/+$/, '')}/chat/completions`;
+            }
+            const isChatCompletions = apiUrl.includes('/chat/completions');
+            const payload = isChatCompletions
+                ? {
+                    model: config.model_name,
+                    messages: [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userContent }
+                    ],
+                    stream: false
+                }
+                : {
+                    model: config.model_name,
+                    prompt: `${systemPrompt}\n\n${userPrompt}`,
+                    stream: false
+                };
             if (config.temperature != null) payload.temperature = parseFloat(config.temperature);
             if (config.max_tokens != null) payload.max_tokens = parseInt(config.max_tokens);
             if (config.top_p != null) payload.top_p = parseFloat(config.top_p);
 
             const response = await axios.post(apiUrl, payload, {
                 headers: { 'Content-Type': 'application/json' },
-                timeout: 120000
+                timeout: LLM_TIMEOUT_MS
             });
-            const content = response.data.choices?.[0]?.message?.content || '';
+            const content = isChatCompletions
+                ? response.data.choices?.[0]?.message?.content || ''
+                : response.data.choices?.[0]?.text || '';
             return parseResponse(content);
         }
 
-        // Native Ollama /api/chat endpoint
+        if (apiUrl.includes('/api/chat')) {
+            const payload = {
+                model: config.model_name,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt, images: images.length > 0 ? images : undefined }
+                ],
+                stream: false,
+                options: {}
+            };
+            if (config.temperature != null) payload.options.temperature = parseFloat(config.temperature);
+            if (config.max_tokens != null) payload.options.num_predict = parseInt(config.max_tokens);
+            if (config.top_p != null) payload.options.top_p = parseFloat(config.top_p);
+
+            const response = await axios.post(apiUrl, payload, {
+                headers: { 'Content-Type': 'application/json' },
+                timeout: LLM_TIMEOUT_MS
+            });
+
+            const content = response.data.message?.content || '';
+            return parseResponse(content);
+        }
+
+        // Native Ollama /api/generate endpoint
         const payload = {
             model: config.model_name,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt, images: images.length > 0 ? images : undefined }
-            ],
+            prompt: userPrompt,
+            system: systemPrompt,
+            images: images.length > 0 ? images : undefined,
             stream: false,
             options: {}
         };
@@ -485,10 +528,10 @@ const callOllamaAPI = async (config, systemPrompt, userPrompt, imageDescriptor =
 
         const response = await axios.post(apiUrl, payload, {
             headers: { 'Content-Type': 'application/json' },
-            timeout: 120000
+            timeout: LLM_TIMEOUT_MS
         });
 
-        const content = response.data.message?.content || '';
+        const content = response.data.response || '';
         return parseResponse(content);
 
     } catch (error) {
@@ -512,28 +555,50 @@ const callGenericAPI = async (config, systemPrompt, userPrompt, imageDescriptor 
             ];
         }
 
-        const payload = {
-            model: config.model_name,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userContent }
-            ]
-        };
+        let apiUrl = String(config.api_url || '').trim();
+        if (apiUrl.endsWith('/v1') || apiUrl.endsWith('/v1/')) {
+            apiUrl = `${apiUrl.replace(/\/+$/, '')}/chat/completions`;
+        }
+        const isChatCompletions = apiUrl.includes('/chat/completions');
+        const isTextCompletions = apiUrl.includes('/completions') && !isChatCompletions;
+
+        if (isTextCompletions && Array.isArray(userContent)) {
+            logger.warn('Generic completions endpoint does not support image inputs. Sending text-only prompt.', {
+                model: config.model_name,
+                api_url: apiUrl
+            });
+            userContent = userPrompt;
+        }
+
+        const payload = isTextCompletions
+            ? {
+                model: config.model_name,
+                prompt: `${systemPrompt}\n\n${userPrompt}`
+            }
+            : {
+                model: config.model_name,
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userContent }
+                ]
+            };
         
         // Add optional parameters
         if (config.temperature != null) payload.temperature = parseFloat(config.temperature);
         if (config.max_tokens != null) payload.max_tokens = parseInt(config.max_tokens);
         if (config.top_p != null) payload.top_p = parseFloat(config.top_p);
-        
-        const response = await axios.post(config.api_url, payload, {
+
+        const response = await axios.post(apiUrl, payload, {
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${config.api_key}`
             },
-            timeout: 30000
+            timeout: LLM_TIMEOUT_MS
         });
-        
-        const content = response.data.choices?.[0]?.message?.content || '';
+
+        const content = isTextCompletions
+            ? response.data.choices?.[0]?.text || ''
+            : response.data.choices?.[0]?.message?.content || '';
         return parseResponse(content);
         
     } catch (error) {

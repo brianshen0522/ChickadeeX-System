@@ -31,6 +31,19 @@ INSERT INTO roles (name, description) VALUES
     ('researcher', 'Can view finalized reports and export data'),
     ('observer', 'Read-only access to finalized reports');
 
+-- Seed default local users (passwords must be rotated in production)
+INSERT INTO users (email, name, role_id, local_password, is_active)
+SELECT 'admin@chickadeex.com', 'System Administrator', r.id, '$2a$10$Xsm39BDwmOWjSubIbymq9ubHfzMNsaDFzCtvyFmYcPvTRlEi6y5Pm', true
+FROM roles r WHERE r.name = 'admin';
+
+INSERT INTO users (email, name, role_id, local_password, is_active)
+SELECT 'doctor@chickadeex.com', 'Doctor', r.id, '$2a$10$kCdzSc19xNRT4ATk1bVWWO0B1VP5fpaf.CWqZeka6fQ4irpbqf0bO', true
+FROM roles r WHERE r.name = 'doctor';
+
+INSERT INTO users (email, name, role_id, local_password, is_active)
+SELECT 'user@chickadeex.com', 'Test User', r.id, '$2a$10$zCgKAdlv12kP0/cDGGoRt.XyricrN2Nown5NITTU7L1237uASEUcm', true
+FROM roles r WHERE r.name = 'observer';
+
 -- Create users table
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -42,7 +55,8 @@ CREATE TABLE users (
     is_active BOOLEAN DEFAULT true,
     last_login TIMESTAMP,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    CHECK (local_password IS NOT NULL OR keycloak_user_id IS NOT NULL)
 );
 
 -- Create sessions table
@@ -201,6 +215,8 @@ CREATE TABLE audit_logs (
 -- Create indexes for performance
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_role_id ON users(role_id);
+CREATE INDEX idx_users_is_active ON users(is_active);
+CREATE INDEX idx_sessions_user_id_expires_at ON sessions(user_id, expires_at);
 CREATE INDEX idx_sessions_token ON sessions USING HASH(token);
 CREATE INDEX idx_sessions_user_id ON sessions(user_id);
 CREATE INDEX idx_sessions_expires_at ON sessions(expires_at);

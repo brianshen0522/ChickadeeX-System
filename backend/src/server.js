@@ -5,8 +5,8 @@ const compression = require('compression');
 require('dotenv').config();
 
 const { logger } = require('./utils/logger');
-const { connectDB } = require('./database/connection');
-const { connectRedis } = require('./database/redis');
+const { connectDB, closeDB } = require('./database/connection');
+const { connectRedis, closeRedis } = require('./database/redis');
 const errorHandler = require('./middleware/errorHandler');
 const createSessionConfig = require('./middleware/sessionConfig');
 
@@ -22,7 +22,10 @@ const uploadRoutes = require('./routes/uploads');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+let server;
+const sockets = new Set();
 
+app.set('trust proxy', 1);
 
 
 // Middleware
@@ -38,7 +41,6 @@ app.use(helmet({
 }));
 
 app.use(compression());
-// Rate limiting disabled by request: allow unlimited requests per IP
 
 // CORS configuration
 app.use(cors({
@@ -66,6 +68,16 @@ app.use((req, res, next) => {
     next();
 });
 
+app.use((req, res, next) => {
+    if (['POST', 'PUT', 'DELETE'].includes(req.method)) {
+        const requestedWith = req.get('X-Requested-With');
+        if (requestedWith !== 'XMLHttpRequest') {
+            return res.status(400).json({ error: 'Missing or invalid X-Requested-With header' });
+        }
+    }
+    next();
+});
+
 // Session configuration will be added after Redis connection
 
 // Health check endpoint
@@ -79,7 +91,7 @@ app.get('/health', (req, res) => {
 });
 
 // API routes
-// Auth routes (no per-IP auth-specific rate limit to avoid blocking logins)
+// Rate limiting disabled per configuration request
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
@@ -101,16 +113,39 @@ app.use('*', (req, res) => {
 // Error handling middleware
 app.use(errorHandler);
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-    logger.info('SIGTERM received, shutting down gracefully');
-    process.exit(0);
-});
+const shutdown = async (signal) => {
+    logger.info(`${signal} received, shutting down gracefully`);
 
-process.on('SIGINT', async () => {
-    logger.info('SIGINT received, shutting down gracefully');
+    const shutdownTimer = setTimeout(() => {
+        logger.error('Forced shutdown after timeout');
+        process.exit(1);
+    }, 10000);
+
+    shutdownTimer.unref();
+
+    if (server) {
+        server.close(() => {
+            logger.info('HTTP server closed');
+        });
+        for (const socket of sockets) {
+            socket.destroy();
+        }
+    }
+
+    try {
+        await closeRedis();
+    } catch (error) {
+        logger.warn('Failed to close Redis gracefully', error);
+    }
+
+    try {
+        await closeDB();
+    } catch (error) {
+        logger.warn('Failed to close database gracefully', error);
+    }
+
     process.exit(0);
-});
+};
 
 // Start server
 async function startServer() {
@@ -127,16 +162,24 @@ async function startServer() {
         app.use(createSessionConfig());
         
         // Start HTTP server
-        app.listen(PORT, '0.0.0.0', () => {
+        server = app.listen(PORT, '0.0.0.0', () => {
             logger.info(`Server running on port ${PORT}`);
             logger.info(`Environment: ${process.env.NODE_ENV}`);
             logger.info(`CORS Origin: ${process.env.CORS_ORIGIN}`);
+        });
+
+        server.on('connection', (socket) => {
+            sockets.add(socket);
+            socket.on('close', () => sockets.delete(socket));
         });
     } catch (error) {
         logger.error('Failed to start server:', error);
         process.exit(1);
     }
 }
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
 
 startServer();
 

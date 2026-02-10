@@ -5,12 +5,19 @@ const API_URL = process.env.REACT_APP_API_URL || '';
 
 const api = axios.create({
   baseURL: `${API_URL}/api`,
-  timeout: 30000,
+  timeout: 999999999,
   headers: {
     'Content-Type': 'application/json',
+    'X-Requested-With': 'XMLHttpRequest'
   },
   withCredentials: true, // Include cookies in requests
 });
+
+let unauthorizedHandler = null;
+
+export const setUnauthorizedHandler = (handler) => {
+  unauthorizedHandler = typeof handler === 'function' ? handler : null;
+};
 
 // Request interceptor - cookies are handled automatically
 api.interceptors.request.use(
@@ -32,7 +39,9 @@ api.interceptors.response.use(
 
     if (response?.status === 401) {
       // Unauthorized - cookies are cleared by server, just redirect
-      if (window.location.pathname !== '/login') {
+      if (unauthorizedHandler) {
+        unauthorizedHandler();
+      } else if (window.location.pathname !== '/login') {
         toast.error('Session expired. Please log in again.');
         window.location.href = '/login';
       }

@@ -94,7 +94,7 @@ const LoginPage = () => {
                     />
                   </div>
                   {errors.username && (
-                    <p className="mt-2 flex items-center text-sm text-error-600">
+                    <p className="mt-2 flex items-center text-sm text-error-600" role="alert">
                       <span className="mr-2 h-1 w-1 rounded-full bg-error-600"></span>
                       {errors.username.message}
                     </p>
@@ -128,7 +128,7 @@ const LoginPage = () => {
                     />
                   </div>
                   {errors.password && (
-                    <p className="mt-2 flex items-center text-sm text-error-600">
+                    <p className="mt-2 flex items-center text-sm text-error-600" role="alert">
                       <span className="mr-2 h-1 w-1 rounded-full bg-error-600"></span>
                       {errors.password.message}
                     </p>

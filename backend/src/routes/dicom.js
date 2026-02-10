@@ -4,8 +4,10 @@ const AdmZip = require('adm-zip');
 const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { getDB } = require('../database/connection');
+const { decryptSecret } = require('../utils/crypto');
 
 const router = express.Router();
+
 
 router.use(authenticateToken);
 router.use(requireAnyRole(['doctor', 'admin']));
@@ -37,6 +39,7 @@ router.get('/studies', async (req, res) => {
       return res.status(503).json({ error: 'PACS settings not configured' });
     }
     const { pacs_url: baseUrl, auth_type, credentials, query_timeout } = cfg.rows[0];
+    const parsedCredentials = normalizeCredentials(credentials);
     const {
       patientId,
       patientName,
@@ -89,11 +92,11 @@ router.get('/studies', async (req, res) => {
 
     // Build headers, including optional auth
     const headers = { Accept: 'application/dicom+json' };
-    if (auth_type === 'basic' && credentials?.username) {
-      const token = Buffer.from(`${credentials.username}:${credentials.password || ''}`).toString('base64');
+    if (auth_type === 'basic' && parsedCredentials?.username) {
+      const token = Buffer.from(`${parsedCredentials.username}:${parsedCredentials.password || ''}`).toString('base64');
       headers['Authorization'] = `Basic ${token}`;
-    } else if (auth_type === 'token' && credentials?.token) {
-      headers['Authorization'] = `Bearer ${credentials.token}`;
+    } else if (auth_type === 'token' && parsedCredentials?.token) {
+      headers['Authorization'] = `Bearer ${parsedCredentials.token}`;
     }
 
     // Build studies endpoint from base URL, ensure single /studies suffix
@@ -130,8 +133,10 @@ router.get('/studies', async (req, res) => {
 const normalizeCredentials = (creds) => {
   if (!creds) return {};
   if (typeof creds === 'string') {
+    const decrypted = decryptSecret(creds);
+    if (!decrypted) return {};
     try {
-      return JSON.parse(creds);
+      return JSON.parse(decrypted);
     } catch (_) {
       return {};
     }

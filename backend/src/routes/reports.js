@@ -1,5 +1,4 @@
 const express = require('express');
-const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -13,6 +12,8 @@ const { validateRequest, validateParams, validateQuery, schemas } = require('../
 const { createAuditLog } = require('../utils/audit');
 const { generateAIReport } = require('../services/llm');
 const { convertDicomToImage } = require('../utils/dicomConverter');
+const { decryptSecret } = require('../utils/crypto');
+const reportService = require('../services/reportService');
 
 const router = express.Router();
 const UPLOAD_ROOT = path.join(__dirname, '..', '..', 'uploads');
@@ -21,6 +22,20 @@ const fsp = fs.promises;
 const toAbsoluteUploadPath = (filePath) => {
     if (!filePath) return null;
     return path.isAbsolute(filePath) ? filePath : path.join(UPLOAD_ROOT, filePath);
+};
+
+const normalizeCredentials = (creds) => {
+    if (!creds) return null;
+    if (typeof creds === 'string') {
+        const decrypted = decryptSecret(creds);
+        if (!decrypted) return null;
+        try {
+            return JSON.parse(decrypted);
+        } catch (_) {
+            return null;
+        }
+    }
+    return creds;
 };
 
 const resolveUploadPreview = async (db, studyInstanceUID, hostOrigin) => {
@@ -129,8 +144,10 @@ const resolveUploadPreview = async (db, studyInstanceUID, hostOrigin) => {
 const normalizePacsCredentials = (creds) => {
     if (!creds) return {};
     if (typeof creds === 'string') {
+        const decrypted = decryptSecret(creds);
+        if (!decrypted) return {};
         try {
-            return JSON.parse(creds);
+            return JSON.parse(decrypted);
         } catch (_err) {
             return {};
         }
@@ -252,19 +269,9 @@ router.get('/llm-configs',
     requireAnyRole(['doctor', 'admin']),
     async (req, res) => {
         try {
-            const db = getDB();
-            const query = `
-                SELECT id, name, model_name, api_url, priority, enabled, max_tokens, temperature, top_p,
-                       (api_key IS NOT NULL) AS has_api_key
-                FROM llm_configs
-                WHERE enabled = true
-                ORDER BY priority ASC
-            `;
-            
-            const result = await db.query(query);
-            res.json(result.rows);
+            const configs = await reportService.getLlmConfigs();
+            res.json(configs);
         } catch (error) {
-            logger.error('Get LLM configs error:', error);
             res.status(500).json({ error: 'Failed to retrieve LLM configurations' });
         }
     }
@@ -276,272 +283,9 @@ router.get('/',
     validateQuery(schemas.reportSearch),
     async (req, res) => {
         try {
-            const {
-                patient_id,
-                patient_name,
-                study_instance_uid,
-                study_date_from,
-                study_date_to,
-                report_date_from,
-                report_date_to,
-                modality,
-                doctor_id,
-                status,
-                finalized_only = false,
-                draft_only = false,
-                limit = 20,
-                offset = 0
-            } = req.query;
-
-            const db = getDB();
-            
-            let query = `
-                SELECT 
-                    r.id,
-                    r.study_instance_uid,
-                    r.patient_id,
-                    r.patient_name,
-                    r.study_date,
-                    r.study_description,
-                    r.modality,
-                    r.doctor_id,
-                    u.name AS doctor_name,
-                    r.created_at,
-                    r.updated_at,
-                    r.finalized_at,
-                    r.tags,
-                    COALESCE(rv.version_count, 0) AS version_count,
-                    (r.finalized_at IS NOT NULL) AS is_finalized,
-                    COUNT(*) OVER() AS total_count
-                FROM reports r
-                LEFT JOIN users u ON u.id = r.doctor_id
-                LEFT JOIN (
-                    SELECT report_id, COUNT(*)::int AS version_count
-                    FROM report_versions
-                    GROUP BY report_id
-                ) rv ON rv.report_id = r.id
-            `;
-            
-            const conditions = [];
-            const values = [];
-            let paramCount = 0;
-
-            const normalizedStatus = (() => {
-                if (!status) {
-                    if (finalized_only) return 'finalized';
-                    if (draft_only) return 'draft';
-                    return null;
-                }
-                const lowered = status.toString().toLowerCase();
-                if (lowered === 'all') return null;
-                if (['finalized', 'completed'].includes(lowered)) return 'finalized';
-                if (lowered === 'draft') return 'draft';
-                return null;
-            })();
-
-            // Role-based filtering
-            if (req.user.role === 'researcher') {
-                // Researchers continue to see finalized reports only
-                conditions.push('r.finalized_at IS NOT NULL');
-            } else if (req.user.role === 'observer') {
-                // Observers see reports based on studies they have uploaded
-                paramCount++;
-                conditions.push(`r.study_instance_uid IN (
-                    SELECT DISTINCT study_instance_uid
-                    FROM uploads
-                    WHERE user_id = $${paramCount} AND status = 'ready'
-                )`);
-                values.push(req.user.id);
-            }
-
-            if (req.user.role === 'doctor') {
-                paramCount++;
-                conditions.push(`r.doctor_id = $${paramCount}`);
-                values.push(req.user.id);
-            }
-
-            if (patient_id) {
-                paramCount++;
-                conditions.push(`r.patient_id ILIKE $${paramCount}`);
-                values.push(`%${patient_id}%`);
-            }
-
-            if (patient_name) {
-                paramCount++;
-                conditions.push(`r.patient_name ILIKE $${paramCount}`);
-                values.push(`%${patient_name}%`);
-            }
-
-            if (study_instance_uid) {
-                paramCount++;
-                // Partial matching for Study Instance UID
-                conditions.push(`r.study_instance_uid ILIKE $${paramCount}`);
-                values.push(`%${study_instance_uid}%`);
-            }
-
-            // Date filtering should use report created date (created_at)
-            const reportsDateFrom = report_date_from || study_date_from;
-            const reportsDateTo = report_date_to || study_date_to;
-            if (reportsDateFrom) {
-                paramCount++;
-                conditions.push(`r.created_at::date >= $${paramCount}::date`);
-                values.push(reportsDateFrom);
-            }
-
-            if (reportsDateTo) {
-                paramCount++;
-                conditions.push(`r.created_at::date <= $${paramCount}::date`);
-                values.push(reportsDateTo);
-            }
-
-            if (modality) {
-                paramCount++;
-                conditions.push(`r.modality = $${paramCount}`);
-                values.push(modality);
-            }
-
-            if (doctor_id) {
-                paramCount++;
-                conditions.push(`r.doctor_id = $${paramCount}`);
-                values.push(doctor_id);
-            }
-
-            // Finalization status filtering (doctor/admin only)
-            const restrictStatusForRole = req.user.role === 'researcher';
-            if (!restrictStatusForRole && normalizedStatus) {
-                if (normalizedStatus === 'finalized') {
-                    conditions.push('r.finalized_at IS NOT NULL');
-                } else if (normalizedStatus === 'draft') {
-                    conditions.push('r.finalized_at IS NULL');
-                }
-            }
-
-            const whereClause = conditions.length > 0
-                ? 'WHERE ' + conditions.join(' AND ')
-                : '';
-
-            const limitIndex = ++paramCount;
-            values.push(parseInt(limit, 10));
-
-            const offsetIndex = ++paramCount;
-            values.push(parseInt(offset, 10));
-
-            const buildListQuery = ({ includeTags = true, includeVersions = true } = {}) => {
-                const columns = [
-                    'r.id',
-                    'r.study_instance_uid',
-                    'r.patient_id',
-                    'r.patient_name',
-                    'r.study_date',
-                    'r.study_description',
-                    'r.modality',
-                    'r.doctor_id',
-                    'u.name AS doctor_name',
-                    'r.created_at',
-                    'r.updated_at',
-                    'r.finalized_at'
-                ];
-
-                columns.push(includeTags ? 'r.tags' : `'{}'::text[] AS tags`);
-
-                columns.push(
-                    includeVersions ? 'COALESCE(rv.version_count, 0) AS version_count' : '0::int AS version_count',
-                    '(r.finalized_at IS NOT NULL) AS is_finalized',
-                    'COUNT(*) OVER() AS total_count'
-                );
-
-                let queryText = `
-                    SELECT 
-                        ${columns.join(',\n                        ')}
-                    FROM reports r
-                    LEFT JOIN users u ON u.id = r.doctor_id
-                `;
-
-                if (includeVersions) {
-                    queryText += `
-                    LEFT JOIN (
-                        SELECT report_id, COUNT(*)::int AS version_count
-                        FROM report_versions
-                        GROUP BY report_id
-                    ) rv ON rv.report_id = r.id`;
-                }
-
-                if (whereClause) {
-                    queryText += `\n${whereClause}`;
-                }
-
-                queryText += `
-                    ORDER BY r.created_at DESC
-                    LIMIT $${limitIndex}
-                    OFFSET $${offsetIndex}
-                `;
-
-                return queryText;
-            };
-
-            const executeQuery = async (queryText) => {
-                return db.query(queryText, values);
-            };
-
-            let result;
-            try {
-                result = await executeQuery(buildListQuery({ includeTags: true, includeVersions: true }));
-            } catch (error) {
-                if (error.code === '42703') {
-                    logger.warn('Reports list query missing extended columns, retrying without optional fields');
-                    try {
-                        result = await executeQuery(buildListQuery({ includeTags: false, includeVersions: true }));
-                    } catch (nestedError) {
-                        if (nestedError.code === '42P01') {
-                            logger.warn('Report versions table missing, retrying without version counts');
-                            result = await executeQuery(buildListQuery({ includeTags: false, includeVersions: false }));
-                        } else {
-                            throw nestedError;
-                        }
-                    }
-                } else if (error.code === '42P01') {
-                    logger.warn('Report versions table missing, retrying without version counts');
-                    result = await executeQuery(buildListQuery({ includeTags: true, includeVersions: false }));
-                } else {
-                    throw error;
-                }
-            }
-
-            const reports = result.rows.map((row) => {
-                const {
-                    total_count,
-                    ...report
-                } = row;
-                const statusValue = report.is_finalized ? 'finalized' : 'draft';
-                return {
-                    ...report,
-                    status: statusValue,
-                    title: report.study_description
-                        ? report.study_description
-                        : `Report for ${report.patient_name || report.patient_id}`,
-                    description: report.study_description || null,
-                    total_count
-                };
-            });
-
-            const total = reports.length > 0 ? Number(reports[0].total_count ?? reports.length) : 0;
-            await createAuditLog(req.user.id, 'reports_listed', 'report', null, {
-                filters: req.query,
-                count: reports.length,
-                ip: req.ip,
-                user_agent: req.get('User-Agent')
-            });
-
-            res.json({
-                reports: reports.map(({ total_count, ...rest }) => rest),
-                pagination: {
-                    limit: parseInt(limit),
-                    offset: parseInt(offset),
-                    total
-                }
-            });
+            const payload = await reportService.searchReports(req);
+            res.json(payload);
         } catch (error) {
-            logger.error('Get reports error:', error);
             res.status(500).json({ error: 'Failed to retrieve reports' });
         }
     }
@@ -637,57 +381,10 @@ router.post('/',
     validateRequest(schemas.createReport),
     async (req, res) => {
         try {
-            const {
-                study_instance_uid,
-                patient_id,
-                patient_name,
-                patient_dob,
-                study_date,
-                study_description,
-                modality
-            } = req.body;
-
-            const db = getDB();
-            
-            // Check if report already exists for this study
-            const existingQuery = 'SELECT id FROM reports WHERE study_instance_uid = $1';
-            const existing = await db.query(existingQuery, [study_instance_uid]);
-            
-            if (existing.rows.length > 0) {
-                return res.status(409).json({ error: 'Report already exists for this study' });
-            }
-
-            const reportId = uuidv4();
-            
-            const insertQuery = `
-                INSERT INTO reports (id, study_instance_uid, patient_id, patient_name, patient_dob, study_date, study_description, modality, doctor_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-                RETURNING *
-            `;
-            
-            const result = await db.query(insertQuery, [
-                reportId,
-                study_instance_uid,
-                patient_id,
-                patient_name || null,
-                patient_dob || null,
-                study_date || null,
-                study_description || null,
-                modality || null,
-                req.user.id
-            ]);
-
-            await createAuditLog(req.user.id, 'report_created', 'report', reportId, {
-                study_instance_uid,
-                patient_id,
-                ip: req.ip,
-                user_agent: req.get('User-Agent')
-            });
-
-            res.status(201).json(result.rows[0]);
+            const report = await reportService.createReport(req);
+            res.status(201).json(report);
         } catch (error) {
-            logger.error('Create report error:', error);
-            res.status(500).json({ error: 'Failed to create report' });
+            res.status(error.statusCode || 500).json({ error: error.message || 'Failed to create report' });
         }
     }
 );
@@ -756,60 +453,15 @@ router.post('/:reportId/versions',
     validateRequest(schemas.createReportVersion),
     async (req, res) => {
         try {
-            const { reportId } = req.params;
-            const { findings, impression, template_used } = req.body;
-            const db = getDB();
-            
-            // Check if report exists and user has access
-            const reportQuery = 'SELECT id, doctor_id FROM reports WHERE id = $1';
-            const reportResult = await db.query(reportQuery, [reportId]);
-            
-            if (reportResult.rows.length === 0) {
-                return res.status(404).json({ error: 'Report not found' });
-            }
-
-            // Prevent duplicate save: compare to latest version content
-            const lastRes = await db.query(
-                'SELECT findings, impression FROM report_versions WHERE report_id = $1 ORDER BY version_no DESC LIMIT 1',
-                [reportId]
-            );
-            if (lastRes.rows.length) {
-                const last = lastRes.rows[0];
-                const norm = (v) => (v || '').trim();
-                if (norm(last.findings) === norm(findings) && norm(last.impression) === norm(impression)) {
-                    return res.status(409).json({ error: 'No changes to save', code: 'NO_CHANGES' });
-                }
-            }
-
-            // Get next version number
-            const versionQuery = 'SELECT COALESCE(MAX(version_no), 0) + 1 as next_version FROM report_versions WHERE report_id = $1';
-            const versionResult = await db.query(versionQuery, [reportId]);
-            const nextVersion = versionResult.rows[0].next_version;
-
-            const insertQuery = `
-                INSERT INTO report_versions (report_id, version_no, findings, impression, template_used)
-                VALUES ($1, $2, $3, $4, $5)
-                RETURNING *
-            `;
-            
-            const result = await db.query(insertQuery, [
-                reportId,
-                nextVersion,
-                findings,
-                impression,
-                template_used || null
-            ]);
-
-            await createAuditLog(req.user.id, 'report_version_created', 'report', reportId, {
-                version_no: nextVersion,
-                ip: req.ip,
-                user_agent: req.get('User-Agent')
-            });
-
-            res.status(201).json(result.rows[0]);
+            const version = await reportService.createVersion(req);
+            res.status(201).json(version);
         } catch (error) {
-            logger.error('Create report version error:', error);
-            res.status(500).json({ error: 'Failed to create report version' });
+            const status = error.statusCode || 500;
+            const payload = { error: error.message || 'Failed to create report version' };
+            if (error.code) {
+                payload.code = error.code;
+            }
+            res.status(status).json(payload);
         }
     }
 );
@@ -820,88 +472,11 @@ router.post('/:reportId/generate-preview',
     validateParams({ reportId: schemas.uuid }),
     async (req, res) => {
         try {
-            const { reportId } = req.params;
-            const db = getDB();
-            
-            // Check if any LLM models are available and enabled
-            const llmCheckRes = await db.query(`SELECT COUNT(*) as count FROM llm_configs WHERE enabled = true`);
-            const availableModels = parseInt(llmCheckRes.rows[0]?.count || 0);
-            
-            if (availableModels === 0) {
-                return res.status(400).json({ 
-                    error: 'No LLM models available. Please configure and enable at least one LLM model in the admin panel before generating reports.' 
-                });
-            }
-            
-            // Get report details
-            const reportQuery = `
-                SELECT r.*, 
-                    (SELECT findings || '\n\n' || impression 
-                     FROM report_versions rv 
-                     WHERE rv.report_id = r.id 
-                     ORDER BY rv.version_no DESC 
-                     LIMIT 1) as previous_content
-                FROM reports r
-                WHERE r.id = $1 AND r.doctor_id = $2
-            `;
-            
-            const reportResult = await db.query(reportQuery, [reportId, req.user.id]);
-            
-            if (reportResult.rows.length === 0) {
-                return res.status(404).json({ error: 'Report not found' });
-            }
-
-            const report = reportResult.rows[0];
-            
-            // Build DICOM context URLs
-            let dicom = { studyInstanceUID: report.study_instance_uid, imagePath: '' };
-            try {
-                const pacs = await db.query('SELECT pacs_url FROM pacs_config LIMIT 1');
-                if (pacs.rows.length && pacs.rows[0].pacs_url) {
-                    const base = String(pacs.rows[0].pacs_url || '').replace(/\/*$/,'');
-                    const studiesBase = /\/studies$/i.test(base) ? base : `${base}/studies`;
-                    dicom.studyUrl = `${studiesBase}/${encodeURIComponent(report.study_instance_uid)}`;
-                }
-            } catch (_) {}
-            // Local download proxy
-            const hostOrigin = `${req.protocol}://${req.get('host')}`;
-            dicom.downloadUrl = `${hostOrigin}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download`;
-
-            const preview = await resolveUploadPreview(db, report.study_instance_uid, hostOrigin);
-            if (preview) {
-                dicom.downloadUrl = preview.downloadUrl || dicom.downloadUrl;
-                dicom.imageUrl = preview.imageUrl || '';
-                dicom.imageMimeType = preview.imageMimeType || 'image/jpeg';
-                dicom.imagePath = preview.imagePath || '';
-            } else {
-                dicom.imageUrl = '';
-                dicom.imageMimeType = 'image/jpeg';
-                dicom.imagePath = '';
-            }
-            
-            // Generate AI content
-            const aiResult = await generateAIReport({
-                studyDescription: report.study_description,
-                modality: report.modality,
-                clinicalContext: report.clinical_context || '',
-                previousContent: report.previous_content,
-                dicom
-            });
-
-            // Return preview content without saving
-            res.json({
-                findings: aiResult.findings,
-                impression: aiResult.impression,
-                model_used: aiResult.model_used,
-                model_config: aiResult.model_config,
-                preview: true
-            });
+            const preview = await reportService.generatePreview(req);
+            res.json(preview);
         } catch (error) {
-            logger.error('Generate AI report preview error:', error);
-            if (error && /image preview required/i.test(error.message || '')) {
-                return res.status(400).json({ error: 'Preview image unavailable for AI generation' });
-            }
-            res.status(500).json({ error: 'Failed to generate AI report preview' });
+            const status = error.statusCode || 500;
+            res.status(status).json({ error: error.message || 'Failed to generate AI report preview' });
         }
     }
 );
@@ -1162,54 +737,14 @@ router.put('/:reportId/description',
 
 // Finalize report (Doctor and Observer)
 router.post('/:reportId/finalize',
-    requireAnyRole(['doctor', 'observer']),
+    requireAnyRole(['doctor']),
     validateParams({ reportId: schemas.uuid }),
     async (req, res) => {
         try {
-            const { reportId } = req.params;
-            const db = getDB();
-            
-            // Check if report exists and has versions
-            const checkQuery = `
-                SELECT r.id, r.finalized_at,
-                    (SELECT COUNT(*) FROM report_versions rv WHERE rv.report_id = r.id) as version_count
-                FROM reports r
-                WHERE r.id = $1 AND r.doctor_id = $2
-            `;
-            
-            const checkResult = await db.query(checkQuery, [reportId, req.user.id]);
-            
-            if (checkResult.rows.length === 0) {
-                return res.status(404).json({ error: 'Report not found' });
-            }
-
-            if (checkResult.rows[0].version_count === 0) {
-                return res.status(400).json({ error: 'Cannot finalize report without versions' });
-            }
-
-            if (checkResult.rows[0].finalized_at) {
-                return res.status(400).json({ error: 'Report is already finalized' });
-            }
-
-            // Finalize report
-            const updateQuery = `
-                UPDATE reports 
-                SET finalized_at = CURRENT_TIMESTAMP 
-                WHERE id = $1
-                RETURNING *
-            `;
-            
-            const result = await db.query(updateQuery, [reportId]);
-
-            await createAuditLog(req.user.id, 'report_finalized', 'report', reportId, {
-                ip: req.ip,
-                user_agent: req.get('User-Agent')
-            });
-
-            res.json(result.rows[0]);
+            const result = await reportService.finalizeReport(req);
+            res.json(result);
         } catch (error) {
-            logger.error('Finalize report error:', error);
-            res.status(500).json({ error: 'Failed to finalize report' });
+            res.status(error.statusCode || 500).json({ error: error.message || 'Failed to finalize report' });
         }
     }
 );
@@ -1258,76 +793,18 @@ router.get('/:reportId/export',
     checkReportAccess,
     async (req, res) => {
         try {
-            // Export allowed in development (system_flags removed)
-            const db = getDB();
-
-            const { reportId } = req.params;
-            const { format = 'json' } = req.query;
-            
-            const exportQuery = `
-                SELECT 
-                    r.*,
-                    u.name as doctor_name,
-                    u.email as doctor_email,
-                    json_agg(json_build_object(
-                        'version_no', rv.version_no,
-                        'findings', rv.findings,
-                        'impression', rv.impression,
-                        'template_used', rv.template_used,
-                        'generated_by_ai', rv.generated_by_ai,
-                        'ai_model_used', rv.ai_model_used,
-                        'created_at', rv.created_at
-                    ) ORDER BY rv.version_no) as versions
-                FROM reports r
-                JOIN users u ON r.doctor_id = u.id
-                LEFT JOIN report_versions rv ON r.id = rv.report_id
-                WHERE r.id = $1
-                GROUP BY r.id, u.name, u.email
-            `;
-            
-            const result = await db.query(exportQuery, [reportId]);
-            
-            if (result.rows.length === 0) {
-                return res.status(404).json({ error: 'Report not found' });
+            const result = await reportService.exportReport(req);
+            if (result.format === 'json') {
+                return res.json(result.data);
             }
-
-            await createAuditLog(req.user.id, 'report_exported', 'report', reportId, {
-                format,
-                ip: req.ip,
-                user_agent: req.get('User-Agent')
-            });
-
-            const reportData = result.rows[0];
-            
-            if (format === 'json') {
-                res.json(reportData);
-            } else if (format === 'csv') {
-                // Simple CSV export - in production, use a proper CSV library
-                const csvData = [
-                    'Study Instance UID,Patient ID,Patient Name,Study Date,Modality,Doctor,Created,Finalized,Latest Findings,Latest Impression',
-                    [
-                        reportData.study_instance_uid,
-                        reportData.patient_id,
-                        reportData.patient_name || '',
-                        reportData.study_date || '',
-                        reportData.modality || '',
-                        reportData.doctor_name,
-                        reportData.created_at,
-                        reportData.finalized_at || '',
-                        reportData.versions?.[reportData.versions.length - 1]?.findings || '',
-                        reportData.versions?.[reportData.versions.length - 1]?.impression || ''
-                    ].join(',')
-                ].join('\n');
-                
+            if (result.format === 'csv') {
                 res.setHeader('Content-Type', 'text/csv');
-                res.setHeader('Content-Disposition', `attachment; filename="report-${reportId}.csv"`);
-                res.send(csvData);
-            } else {
-                res.status(400).json({ error: 'Unsupported format' });
+                res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+                return res.send(result.data);
             }
+            return res.status(400).json({ error: 'Unsupported format' });
         } catch (error) {
-            logger.error('Export report error:', error);
-            res.status(500).json({ error: 'Failed to export report' });
+            res.status(error.statusCode || 500).json({ error: error.message || 'Failed to export report' });
         }
     }
 );

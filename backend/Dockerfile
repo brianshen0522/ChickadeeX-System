@@ -1,37 +1,27 @@
-FROM node:18-alpine
+FROM node:18.20-alpine3.19
 
-# Set working directory
 WORKDIR /app
 
-# Install system dependencies
+# Create non-root user
+RUN addgroup -g 1001 -S nodejs \
+ && adduser -S nodejs -u 1001 -G nodejs
+
 RUN apk add --no-cache postgresql-client
 
-# Copy package files
-COPY package*.json ./
-
-# Install dependencies
+COPY --chown=nodejs:nodejs package*.json ./
 RUN npm install --production
 
-# Copy application code
-COPY . .
+COPY --chown=nodejs:nodejs . .
 
-# Create uploads directory
-RUN mkdir -p uploads
+# Create runtime directories
+RUN mkdir -p uploads logs
 
-# Create non-root user
-RUN addgroup -g 1001 -S nodejs
-RUN adduser -S nodejs -u 1001
-
-# Change ownership of app directory
-RUN chown -R nodejs:nodejs /app
 USER nodejs
 
-# Expose port
 EXPOSE 3000
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
   CMD node healthcheck.js
 
-# Start application
 CMD ["npm", "start"]
+

@@ -30,7 +30,7 @@ backend/uploads/*
 !backend/uploads/.gitkeep
 
 # Nginx / PHP logs
-nginx_config/log/
+nginx_config/log/*
 
 # Docker
 docker-data/

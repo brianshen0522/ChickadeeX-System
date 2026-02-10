@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, useRef } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import * as authService from '../services/authService';
+import { setUnauthorizedHandler } from '../services/api';
 
 const AuthContext = createContext();
 
@@ -17,16 +18,12 @@ export const AuthProvider = ({ children }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const location = useLocation();
-  const hasBootstrappedRef = useRef(false);
+  const navigate = useNavigate();
   const hasVerifiedSessionRef = useRef(false);
+  const hasUnauthorizedHandlerRef = useRef(false);
 
   // Check for existing session on mount (but skip on login page)
   useEffect(() => {
-    if (!hasBootstrappedRef.current) {
-      authService.bootstrapAuthToken();
-      hasBootstrappedRef.current = true;
-    }
-
     if (location.pathname === '/login') {
       hasVerifiedSessionRef.current = false;
       setIsLoading(false);
@@ -43,6 +40,17 @@ export const AuthProvider = ({ children }) => {
     checkAuthStatus();
   }, [location.pathname]);
 
+  useEffect(() => {
+    if (!hasUnauthorizedHandlerRef.current) {
+      setUnauthorizedHandler(() => {
+        if (window.location.pathname !== '/login') {
+          logout().finally(() => navigate('/login'));
+        }
+      });
+      hasUnauthorizedHandlerRef.current = true;
+    }
+  }, [navigate]);
+
   const checkAuthStatus = async (retryCount = 0) => {
     let authError = null;
 
@@ -58,7 +66,8 @@ export const AuthProvider = ({ children }) => {
 
       // Handle specific error cases
       if (error?.response?.status === 401) {
-        authService.clearAuthToken();
+        setUser(null);
+        setIsAuthenticated(false);
       } else if (error?.response?.status >= 500 && retryCount < 3) {
         // Retry on server errors with exponential backoff
         console.log(`Retrying auth check (attempt ${retryCount + 1})`);
@@ -78,13 +87,7 @@ export const AuthProvider = ({ children }) => {
   const login = async (credentials) => {
     try {
       const response = await authService.login(credentials);
-      const { user: userData, token } = response;
-
-      if (token) {
-        authService.storeAuthToken(token);
-      } else {
-        authService.clearAuthToken();
-      }
+      const { user: userData } = response;
       
       // Cookie is set by server automatically
       setUser(userData);
@@ -105,7 +108,6 @@ export const AuthProvider = ({ children }) => {
     } catch (error) {
       console.error('Logout error:', error);
     } finally {
-      authService.clearAuthToken();
       // Cookie is cleared by server
       setUser(null);
       setIsAuthenticated(false);
@@ -116,13 +118,7 @@ export const AuthProvider = ({ children }) => {
   const refreshToken = async () => {
     try {
       const response = await authService.refreshToken();
-      const { user: userData, token } = response;
-
-      if (token) {
-        authService.storeAuthToken(token);
-      } else {
-        authService.clearAuthToken();
-      }
+      const { user: userData } = response;
       
       // Cookie is refreshed by server automatically
       setUser(userData);

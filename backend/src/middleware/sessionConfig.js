@@ -4,12 +4,15 @@ const { getRedis } = require('../database/redis');
 
 const createSessionConfig = () => {
     const redisClient = getRedis();
+    if (!process.env.SESSION_SECRET) {
+        throw new Error('SESSION_SECRET must be set');
+    }
     return session({
         store: new RedisStore({ 
             client: redisClient,
             prefix: 'medical-reports:sess:',
         }),
-        secret: process.env.SESSION_SECRET || 'your-secret-key',
+        secret: process.env.SESSION_SECRET,
         resave: false,
         saveUninitialized: false,
         name: 'medical-reports-session',

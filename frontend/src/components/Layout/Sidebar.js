@@ -99,12 +99,18 @@ const Sidebar = ({ isCollapsed, onToggleCollapse, isMobileOpen: controlledMobile
     <>
       {isMobileOpen && (
         <div className="fixed inset-0 z-40 flex md:hidden">
-          <div className="fixed inset-0 bg-black/60" onClick={() => setIsMobileOpen(false)} />
+          <button
+            type="button"
+            className="fixed inset-0 bg-black/60"
+            onClick={() => setIsMobileOpen(false)}
+            aria-label="Close sidebar"
+          />
           <div className="relative flex w-full max-w-xs flex-col bg-white text-slate-700 shadow-xl">
             <div className="absolute top-0 right-0 -mr-12 pt-4">
               <button
                 className="ml-1 flex h-10 w-10 items-center justify-center rounded-xl bg-white shadow-lg focus:outline-none focus:ring-2 focus:ring-primary-500"
                 onClick={() => setIsMobileOpen(false)}
+                aria-label="Close sidebar"
               >
                 <X className="h-5 w-5" />
               </button>

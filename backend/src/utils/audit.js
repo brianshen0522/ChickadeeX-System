@@ -1,9 +1,30 @@
 const { getDB } = require('../database/connection');
 const { logger } = require('./logger');
 
+const stripHtml = (value) => value.replace(/<[^>]*>/g, '');
+
+const sanitizeDetails = (details) => {
+    if (!details || typeof details !== 'object') {
+        return {};
+    }
+    const sanitized = {};
+    for (const [key, value] of Object.entries(details)) {
+        if (typeof value === 'string') {
+            sanitized[key] = stripHtml(value);
+        } else {
+            sanitized[key] = value;
+        }
+    }
+    return sanitized;
+};
+
 const createAuditLog = async (userId, action, targetType = null, targetId = null, details = {}) => {
     try {
         const db = getDB();
+        const sanitizedDetails = sanitizeDetails(details);
+        const userAgent = typeof sanitizedDetails.user_agent === 'string'
+            ? sanitizedDetails.user_agent.slice(0, 512)
+            : null;
         
         const query = `
             INSERT INTO audit_logs (user_id, action, target_type, target_id, details, ip_address, user_agent)
@@ -15,9 +36,9 @@ const createAuditLog = async (userId, action, targetType = null, targetId = null
             action,
             targetType,
             targetId,
-            JSON.stringify(details),
-            details.ip || null,
-            details.user_agent || null
+            JSON.stringify(sanitizedDetails),
+            sanitizedDetails.ip || null,
+            userAgent
         ]);
         
         logger.info('Audit log created', {
@@ -25,7 +46,7 @@ const createAuditLog = async (userId, action, targetType = null, targetId = null
             action,
             targetType,
             targetId,
-            details
+            details: sanitizedDetails
         });
     } catch (error) {
         logger.error('Failed to create audit log:', error);

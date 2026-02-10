@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { getReports, deleteReport, getReportsSummary } from '../services/reportService';
-import { Search, Filter, Eye, Download, CheckCircle, Clock, User, FileText, X, BarChart3, Activity, Trash2, Loader2 } from 'lucide-react';
+import { Search, Filter, Eye, CheckCircle, Clock, User, FileText, X, BarChart3, Activity, Trash2, Loader2, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import toast from 'react-hot-toast';
@@ -15,6 +15,7 @@ const ReportsPage = () => {
   const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
   const [reports, setReports] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
   const [filters, setFilters] = useState({
     patient_id: '',
     patient_name: '',
@@ -97,11 +98,6 @@ const ReportsPage = () => {
     ]);
   }, [filters.status, setBreadcrumbs, setPageTitle]);
 
-  // Fetch whenever filters or pagination change
-  useEffect(() => {
-    fetchReports();
-  }, [filters, pagination.offset]);
-
   const formatDisplayDate = (value, pattern = 'MMM dd') => {
     if (!value) return '—';
     const date = value instanceof Date ? value : new Date(value);
@@ -114,8 +110,9 @@ const ReportsPage = () => {
     }
   };
 
-  const fetchReports = async () => {
+  const fetchReports = useCallback(async () => {
     setLoading(true);
+    setError(null);
     try {
       const params = {
         ...filters,
@@ -163,50 +160,33 @@ const ReportsPage = () => {
       }));
     } catch (error) {
       console.error('Fetch reports error:', error);
+      setError(error);
       toast.error('Failed to load reports');
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters, pagination.limit, pagination.offset]);
+
+  // Fetch whenever filters or pagination change
+  useEffect(() => {
+    fetchReports();
+  }, [fetchReports]);
 
   const canDelete = ['doctor', 'observer', 'admin'].includes(user?.role);
 
-  const openDeleteModal = (report) => {
+  const openDeleteModal = useCallback((report) => {
     if (!canDelete) return;
     setDeleteModalTarget(report);
     setDeleteModalOpen(true);
-  };
+  }, [canDelete]);
 
-  const closeDeleteModal = () => {
+  const closeDeleteModal = useCallback(() => {
     if (deletingId) return;
     setDeleteModalOpen(false);
     setDeleteModalTarget(null);
-  };
+  }, [deletingId]);
 
-  const confirmDeleteReport = async () => {
-    if (!canDelete || !deleteModalTarget) return;
-    const report = deleteModalTarget;
-    setDeletingId(report.id);
-    try {
-      const shouldStepBack = reports.length === 1 && pagination.offset >= pagination.limit;
-      await deleteReport(report.id);
-      toast.success('Report deleted');
-      if (shouldStepBack) {
-        setPagination((prev) => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }));
-      } else {
-        fetchReports();
-      }
-      setDeleteModalOpen(false);
-      setDeleteModalTarget(null);
-    } catch (error) {
-      const message = error.response?.data?.error || 'Failed to delete report';
-      toast.error(message);
-    } finally {
-      setDeletingId(null);
-    }
-  };
-
-  const handleFilterChange = (field, value) => {
+  const handleFilterChange = useCallback((field, value) => {
     setFilters(prev => ({
       ...prev,
       [field]: value,
@@ -223,14 +203,38 @@ const ReportsPage = () => {
         navigate('/reports', { replace: true });
       }
     }
-  };
+  }, [navigate]);
 
-  const handlePageChange = (newOffset) => {
+  const handlePageChange = useCallback((newOffset) => {
     setPagination(prev => ({ ...prev, offset: newOffset }));
-  };
+  }, []);
 
-  const canCreateReports = false; // Create Report disabled per project scope
-  const canExport = ['doctor', 'researcher'].includes(user?.role);
+  const reportItems = useMemo(() => reports, [reports]);
+  const showEmptyState = !loading && !error && reportItems.length === 0;
+
+  const confirmDeleteReport = useCallback(async () => {
+    if (!canDelete || !deleteModalTarget) return;
+    const report = deleteModalTarget;
+    setDeletingId(report.id);
+    try {
+      const shouldStepBack = reportItems.length === 1 && pagination.offset >= pagination.limit;
+      await deleteReport(report.id);
+      toast.success('Report deleted');
+      if (shouldStepBack) {
+        setPagination((prev) => ({ ...prev, offset: Math.max(0, prev.offset - prev.limit) }));
+      } else {
+        fetchReports();
+      }
+      setDeleteModalOpen(false);
+      setDeleteModalTarget(null);
+    } catch (error) {
+      const message = error.response?.data?.error || 'Failed to delete report';
+      toast.error(message);
+    } finally {
+      setDeletingId(null);
+    }
+  }, [canDelete, deleteModalTarget, fetchReports, pagination.limit, pagination.offset, reportItems.length]);
+
   const statusLabelMap = {
     all: 'All Reports',
     draft: 'Draft Reports',
@@ -256,11 +260,11 @@ const ReportsPage = () => {
           </span>
           <span className="inline-flex items-center gap-1 text-success-600">
             <CheckCircle className="h-3.5 w-3.5" />
-            {reports.filter(r => r.is_finalized).length} finalized
+            {reportItems.filter(r => r.is_finalized).length} finalized
           </span>
           <span className="inline-flex items-center gap-1 text-warning-600">
             <Clock className="h-3.5 w-3.5" />
-            {reports.filter(r => !r.is_finalized).length} drafts
+            {reportItems.filter(r => !r.is_finalized).length} drafts
           </span>
         </div>
       </div>
@@ -290,6 +294,7 @@ const ReportsPage = () => {
           <button
             onClick={fetchReports}
             className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
+            aria-label="Search reports"
           >
             <Search className="h-4 w-4" />
           </button>
@@ -301,6 +306,7 @@ const ReportsPage = () => {
                 ? 'border-blue-200 text-blue-700 bg-blue-50' 
                 : 'border-gray-200 text-gray-700 bg-white hover:bg-gray-50'
             }`}
+            aria-label="Toggle advanced filters"
           >
             <Filter className="h-4 w-4" />
           </button>
@@ -398,7 +404,24 @@ const ReportsPage = () => {
           <div className="p-12 flex justify-center">
             <LoadingSpinner />
           </div>
-        ) : reports.length === 0 ? (
+        ) : error ? (
+          <div className="text-center py-16" role="alert">
+            <div className="h-16 w-16 bg-rose-50 rounded-xl mx-auto flex items-center justify-center mb-4">
+              <AlertTriangle className="h-8 w-8 text-rose-500" />
+            </div>
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Failed to load reports</h3>
+            <p className="text-sm text-gray-500 max-w-sm mx-auto">
+              Please try again. If the problem persists, contact support.
+            </p>
+            <button
+              type="button"
+              onClick={fetchReports}
+              className="mt-4 inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Retry
+            </button>
+          </div>
+        ) : showEmptyState ? (
           <div className="text-center py-16">
             <div className="h-16 w-16 bg-gray-100 rounded-xl mx-auto flex items-center justify-center mb-4">
               <FileText className="h-8 w-8 text-gray-400" />
@@ -412,7 +435,7 @@ const ReportsPage = () => {
           <div className="flex-1 overflow-y-auto">
             <div className="p-4">
               <div className="space-y-3 sm:space-y-2.5">
-                {reports.map((report) => {
+                {reportItems.map((report) => {
                   const statusValue = report.status || (report.is_finalized ? 'finalized' : 'draft');
                   const isFinalized = statusValue === 'finalized' || statusValue === 'completed' || report.is_finalized;
                   const reportTitle = report.title || report.patient_name || (report.patient_id ? `Patient ${report.patient_id}` : 'Report');
@@ -529,15 +552,6 @@ const ReportsPage = () => {
                             </button>
                           )}
 
-                          {canExport && isFinalized && (
-                            <button
-                              onClick={() => toast.success('Export feature will be implemented')}
-                              className="hidden h-9 shrink-0 items-center rounded-md border border-gray-200 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-500 sm:flex"
-                            >
-                              <Download className="mr-1 h-3.5 w-3.5" />
-                              Export
-                            </button>
-                          )}
                         </div>
                       </div>
                     </div>
@@ -550,7 +564,7 @@ const ReportsPage = () => {
       </div>
 
       {/* Enhanced Pagination */}
-      {reports.length > 0 && (
+      {reportItems.length > 0 && (
         <div className="bg-white border-t border-gray-100 px-6 py-4 flex items-center justify-between flex-shrink-0">
           <div className="flex-1 flex justify-between sm:hidden">
             <button

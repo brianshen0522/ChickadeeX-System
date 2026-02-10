@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database
   db:
-    image: postgres:16
+    image: postgres:16.6-alpine
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -9,8 +9,6 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "${DB_PORT}:5432"
     networks:
       - app-network
     healthcheck:
@@ -21,12 +19,10 @@ services:
 
   # Redis for session storage
   redis:
-    image: redis:7-alpine
+    image: redis:7.4-alpine
     command: redis-server --requirepass ${REDIS_PASSWORD}
     volumes:
       - redis_data:/data
-    ports:
-      - "${REDIS_PORT}:6379"
     networks:
       - app-network
     healthcheck:
@@ -41,6 +37,7 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
+    user: "1000:1000"
     environment:
       NODE_ENV: ${NODE_ENV}
       PORT: ${PORT}
@@ -59,8 +56,6 @@ services:
       UPLOAD_MAX_SIZE: ${UPLOAD_MAX_SIZE}
       UPLOAD_ALLOWED_TYPES: ${UPLOAD_ALLOWED_TYPES}
       SESSION_TIMEOUT: ${SESSION_TIMEOUT}
-    ports:
-      - "${BACKEND_PORT}:3000"
     networks:
       - app-network
     depends_on:
@@ -80,8 +75,6 @@ services:
       args:
         REACT_APP_API_URL: ${REACT_APP_API_URL}
         REACT_APP_BLUELIGHT_BASE_URL: ${REACT_APP_BLUELIGHT_BASE_URL}
-    ports:
-      - "${FRONTEND_PORT}:80"
     networks:
       - app-network
     depends_on:

@@ -29,6 +29,7 @@ const DashboardPage = () => {
   const { pacsHealth } = useHealthStatus(role === 'doctor');
   const { setPageTitle, setPageDescription, setBreadcrumbs } = usePageContext();
   const [loadingMetrics, setLoadingMetrics] = useState(false);
+  const [metricsError, setMetricsError] = useState(null);
   const [adminMetrics, setAdminMetrics] = useState(null);
   const [doctorMetrics, setDoctorMetrics] = useState(null);
 
@@ -54,6 +55,7 @@ const DashboardPage = () => {
       }
 
       setLoadingMetrics(true);
+      setMetricsError(null);
       try {
         if (role === 'admin') {
           const [statsData, userData] = await Promise.all([
@@ -83,6 +85,7 @@ const DashboardPage = () => {
         if (isMounted) {
           setAdminMetrics(null);
           setDoctorMetrics(null);
+          setMetricsError(error);
         }
       } finally {
         if (isMounted) {
@@ -296,16 +299,32 @@ const DashboardPage = () => {
 
   return (
     <div className="flex h-full flex-col space-y-4">
-      {shouldShowMetrics && (loadingMetrics || metricCards.length > 0) && (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
-          {loadingMetrics
-            ? Array.from({ length: skeletonCount || 3 }).map((_, index) => (
+      {shouldShowMetrics && (
+        <div>
+          {loadingMetrics ? (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {Array.from({ length: skeletonCount || 3 }).map((_, index) => (
                 <div
                   key={`metric-skeleton-${index}`}
                   className="h-20 animate-pulse rounded-md border border-slate-200 bg-slate-100"
                 />
-              ))
-            : metricCards.map((card) => (
+              ))}
+            </div>
+          ) : metricsError ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-rose-100 bg-rose-50 px-6 py-6 text-center" role="alert">
+              <Shield className="h-8 w-8 text-rose-500" />
+              <h3 className="mt-2 text-sm font-semibold text-rose-700">Metrics unavailable</h3>
+              <p className="mt-1 text-xs text-rose-600">Please try again in a moment.</p>
+            </div>
+          ) : metricCards.length === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-lg border border-slate-200 bg-white px-6 py-6 text-center">
+              <FileText className="h-8 w-8 text-slate-400" />
+              <h3 className="mt-2 text-sm font-semibold text-slate-700">No metrics yet</h3>
+              <p className="mt-1 text-xs text-slate-500">Metrics will appear once activity is recorded.</p>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {metricCards.map((card) => (
                 <div
                   key={card.title}
                   className={`flex items-start gap-3 rounded-md border ${card.surface} px-2.5 py-2.5`}
@@ -327,6 +346,8 @@ const DashboardPage = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
         </div>
       )}
 

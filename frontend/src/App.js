@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { PageProvider } from './contexts/PageContext';
 import LoadingSpinner from './components/UI/LoadingSpinner';
+import ErrorBoundary from './components/UI/ErrorBoundary';
 import Layout from './components/Layout/Layout';
 
 const LoginPage = lazy(() => import('./pages/LoginPage'));
@@ -208,7 +209,9 @@ function App() {
     <Router>
       <AuthProvider>
         <div className="min-h-screen bg-gray-50">
-          <AppRoutes />
+          <ErrorBoundary>
+            <AppRoutes />
+          </ErrorBoundary>
           <Toaster 
             position="bottom-right"
             containerStyle={{ pointerEvents: 'none' }}

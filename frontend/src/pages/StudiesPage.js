@@ -4,7 +4,7 @@ import toast from 'react-hot-toast';
 import LoadingSpinner from '../components/UI/LoadingSpinner';
 import { usePageContext } from '../contexts/PageContext';
 import { resolveBlueLightStartUrl } from '../utils/bluelight';
-import { Search, Filter, Calendar, User, Hash, Settings, X, ChevronDown } from 'lucide-react';
+import { Search, Filter, Calendar, User, Hash, Settings, X, ChevronDown, AlertTriangle, FileText } from 'lucide-react';
 
 const modalityOptions = [
   { label: 'CT', value: 'CT' },
@@ -40,6 +40,7 @@ const formatDA = (da) => {
 const StudiesPage = () => {
   const { setPageTitle, setPageDescription } = usePageContext();
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [items, setItems] = useState([]);
   const [pacsBase, setPacsBase] = useState({ pacs_url: '', studies_base: '' });
   const [openDownloadFor, setOpenDownloadFor] = useState(null);
@@ -65,6 +66,7 @@ const StudiesPage = () => {
 
   const fetchData = async (opts = {}) => {
     setLoading(true);
+    setError(null);
     try {
       const params = { ...filters, limit: pagination.limit, offset: pagination.offset, ...opts };
       // Clean studyDate format: allow user input like yyyy/mm/dd - yyyy/mm/dd
@@ -85,6 +87,7 @@ const StudiesPage = () => {
       const res = await searchStudies(params);
       setItems(res.items || []);
     } catch (e) {
+      setError(e);
       toast.error('Failed to load studies');
     } finally {
       setLoading(false);
@@ -393,6 +396,25 @@ const StudiesPage = () => {
         {loading ? (
           <div className="flex-1 flex items-center justify-center">
             <LoadingSpinner />
+          </div>
+        ) : error ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6" role="alert">
+            <AlertTriangle className="h-10 w-10 text-rose-500 mb-3" />
+            <h3 className="text-base font-semibold text-gray-900">Failed to load studies</h3>
+            <p className="text-sm text-gray-500 mt-1">Please try again.</p>
+            <button
+              type="button"
+              onClick={() => fetchData({ offset: pagination.offset })}
+              className="mt-4 inline-flex items-center px-4 py-2 rounded-lg bg-blue-600 text-white text-sm font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Retry
+            </button>
+          </div>
+        ) : items.length === 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
+            <FileText className="h-10 w-10 text-gray-400 mb-3" />
+            <h3 className="text-base font-semibold text-gray-900">No studies found</h3>
+            <p className="text-sm text-gray-500 mt-1">Adjust your filters or search again.</p>
           </div>
         ) : (
           <>
