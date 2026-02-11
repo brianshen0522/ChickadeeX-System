@@ -594,7 +594,13 @@ const generatePreview = async (req) => {
     const { reportId } = req.params;
     const db = getDB();
 
-    const llmCheckRes = await db.query(`SELECT COUNT(*) as count FROM llm_configs WHERE enabled = true`);
+    const llmCheckRes = await db.query(`
+        SELECT COUNT(*) as count FROM (
+            SELECT id FROM llm_configs WHERE enabled = true
+            UNION ALL
+            SELECT id FROM llm_pipelines WHERE enabled = true
+        ) combined
+    `);
     const availableModels = parseInt(llmCheckRes.rows[0]?.count || 0);
     if (availableModels === 0) {
         throw new AppError('No LLM models available. Please configure and enable at least one LLM model in the admin panel before generating reports.', 400, 'LLM_NOT_CONFIGURED');

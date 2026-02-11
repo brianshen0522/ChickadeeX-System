@@ -4,6 +4,7 @@ import { usePageContext } from '../contexts/PageContext';
 import { 
   getUsers, 
   getLLMConfigs, 
+  getLLMPipelines,
   getSystemSettings, 
   updateSystemSettings,
   getPACSConfig,
@@ -11,11 +12,15 @@ import {
   createLLMConfig,
   updateLLMConfig,
   deleteLLMConfig,
+  createLLMPipeline,
+  updateLLMPipeline,
+  deleteLLMPipeline,
   updateUser,
   setUserRole,
   clearUserPassword,
   deleteUser,
   testLLMConfig,
+  testLLMPipeline,
   getStatistics,
   getUserStats,
   listProviderModels
@@ -25,6 +30,7 @@ import {
   Settings, 
   Database, 
   Cpu, 
+  GitBranch,
   Plus,
   Edit,
   Save,
@@ -50,6 +56,7 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
   const [activeTab, setActiveTab] = useState(initialTab);
   const [users, setUsers] = useState([]);
   const [llmConfigs, setLLMConfigs] = useState([]);
+  const [llmPipelines, setLLMPipelines] = useState([]);
   const [systemSettings, setSystemSettings] = useState({ system_name: '', max_concurrent_tasks: 5, backup_frequency: 'daily' });
   const [pacsConfig, setPacsConfig] = useState({ pacs_url: '', auth_type: 'none', credentials: {}, connection_timeout: 30, query_timeout: 60 });
   const [editingPacs, setEditingPacs] = useState(null);
@@ -58,10 +65,13 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
   const [userStats, setUserStats] = useState(null);
   const [editingLLM, setEditingLLM] = useState(null);
   const [llmModal, setLlmModal] = useState({ open: false, mode: 'create', config: null });
+  const [pipelineModal, setPipelineModal] = useState({ open: false, mode: 'create', config: null });
 
   // Health status per LLM config
   const [llmHealth, setLlmHealth] = useState({});
   const [testLoading, setTestLoading] = useState({});
+  const [pipelineHealth, setPipelineHealth] = useState({});
+  const [pipelineTestLoading, setPipelineTestLoading] = useState({});
 
   const tabs = [
     { id: 'users', name: 'Users', icon: Users },
@@ -84,6 +94,7 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
     fetchData();
     getStatistics().then(setStats).catch(() => {});
     getLLMConfigs().then(setLLMConfigs).catch(() => {});
+    getLLMPipelines().then(setLLMPipelines).catch(() => {});
     getUsers().then(setUsers).catch(() => {});
     getUserStats().then(setUserStats).catch(() => {});
   }, [activeTab, setPageTitle, setPageDescription, standalone]);
@@ -99,6 +110,8 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
         case 'llm':
           const llmData = await getLLMConfigs();
           setLLMConfigs(llmData);
+          const pipelineData = await getLLMPipelines();
+          setLLMPipelines(pipelineData);
           break;
         case 'pacs':
           const pacs = await getPACSConfig();
@@ -192,6 +205,51 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
       fetchData();
     } catch (e) {
       toast.error(e?.response?.data?.error || 'Failed to delete LLM configuration');
+    }
+  };
+
+  const handleCreatePipeline = async (payload) => {
+    try {
+      const result = await createLLMPipeline(payload);
+      if (result.test_result) {
+        setPipelineHealth(prev => ({ ...prev, [result.id]: result.test_result }));
+        if (result.test_result.healthy) {
+          toast.success(`Pipeline created and tested. Stage 1 latency: ${result.test_result.latency_ms}ms`);
+        } else {
+          toast.error(result.test_result.error || 'Pipeline created, but auto-test failed.');
+        }
+      } else {
+        toast.success('Pipeline created');
+      }
+      setPipelineModal({ open: false, mode: 'create', config: null });
+      fetchData();
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'Failed to create pipeline');
+    }
+  };
+
+  const handleUpdatePipeline = async (id, payload) => {
+    try {
+      const updated = await updateLLMPipeline(id, payload);
+      setLLMPipelines(prev => prev.map(p => p.id === id ? { ...p, ...updated } : p));
+      setPipelineModal({ open: false, mode: 'create', config: null });
+      toast.success('Pipeline updated');
+      fetchData();
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'Failed to update pipeline');
+    }
+  };
+
+  const handleDeletePipeline = async (id) => {
+    const target = llmPipelines.find(p => p.id === id);
+    if (!window.confirm(`Delete pipeline "${target?.name || ''}"? This cannot be undone.`)) return;
+    try {
+      await deleteLLMPipeline(id);
+      setLLMPipelines(prev => prev.filter(p => p.id !== id));
+      toast.success('Pipeline deleted');
+      fetchData();
+    } catch (error) {
+      toast.error(error?.response?.data?.error || 'Failed to delete pipeline');
     }
   };
 
@@ -756,6 +814,193 @@ const AdminPage = ({ initialTab = 'users', standalone = false }) => {
           onClose={() => setLlmModal({ open: false, mode: 'create', config: null })}
           onCreate={(payload) => handleCreateLLM(payload)}
           onUpdate={(id, payload) => handleUpdateLLM(id, payload)}
+        />
+      )}
+
+      {/* LLM Pipelines */}
+      <div className="bg-white shadow-sm rounded-lg border border-gray-200 overflow-hidden">
+        <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-gray-900">LLM Pipelines</h3>
+            <div className="flex items-center gap-4 text-sm text-gray-600">
+              <span className="inline-flex items-center gap-1">
+                <CheckCircle className="h-4 w-4 text-green-500" />
+                Enabled: <strong>{llmPipelines.filter(p => p.enabled).length}</strong>
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <X className="h-4 w-4 text-gray-500" />
+                Disabled: <strong>{llmPipelines.filter(p => !p.enabled).length}</strong>
+              </span>
+              <span>Total: <strong>{llmPipelines.length}</strong></span>
+              <button
+                onClick={() => setPipelineModal({ open: true, mode: 'create', config: null })}
+                className="inline-flex items-center px-3 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Create Pipeline
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div className="overflow-x-auto">
+          <div className="min-w-full divide-y divide-gray-200">
+            {llmPipelines.map((pipeline) => (
+              <div key={pipeline.id} className="px-6 py-4 bg-white hover:bg-blue-50 transition-colors duration-150">
+                <div className="grid grid-cols-12 gap-4 items-center">
+                  <div className="col-span-5">
+                    <div className="flex items-center space-x-2">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{pipeline.name}</p>
+                      {pipelineHealth[pipeline.id]?.healthy === true && (
+                        <span className="inline-flex items-center" title="Pipeline is healthy">
+                          <span className="w-2 h-2 bg-green-400 rounded-full"></span>
+                        </span>
+                      )}
+                      {pipelineHealth[pipeline.id]?.healthy === false && (
+                        <span className="inline-flex items-center" title="Pipeline test failed">
+                          <span className="w-2 h-2 bg-red-400 rounded-full"></span>
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1 text-xs text-gray-600 flex flex-wrap items-center gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-full border border-gray-200 bg-gray-50 px-2 py-0.5">
+                        <GitBranch className="h-3 w-3" />
+                        {pipeline.stage1_model_name} → {pipeline.stage2_model_name}
+                      </span>
+                      {pipeline.stage1_include_image && (
+                        <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">
+                          Stage 1 image
+                        </span>
+                      )}
+                      {pipeline.stage2_include_image && (
+                        <span className="inline-flex items-center rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-blue-700">
+                          Stage 2 image
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="col-span-2">
+                    <div className="text-xs text-gray-500">Priority</div>
+                    <div className="text-sm text-gray-900">{pipeline.priority}</div>
+                  </div>
+
+                  <div className="col-span-2">
+                    <div className="text-xs text-gray-500 mb-1">Status</div>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const next = !pipeline.enabled;
+                          setLLMPipelines(prev => prev.map(p => p.id === pipeline.id ? { ...p, enabled: next } : p));
+                          try {
+                            await updateLLMPipeline(pipeline.id, { enabled: next });
+                          } catch (e) {
+                            setLLMPipelines(prev => prev.map(p => p.id === pipeline.id ? { ...p, enabled: !next } : p));
+                            toast.error('Failed to toggle');
+                          }
+                        }}
+                        className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${pipeline.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+                        aria-pressed={pipeline.enabled}
+                      >
+                        <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${pipeline.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+                      </button>
+                      <span className={`text-xs font-medium ${pipeline.enabled ? 'text-green-700' : 'text-red-700'}`}>{pipeline.enabled ? 'Enabled' : 'Disabled'}</span>
+                    </div>
+                  </div>
+
+                  <div className="col-span-3">
+                    <div className="flex items-center space-x-2 justify-end">
+                      <button
+                        onClick={async () => {
+                          setPipelineTestLoading(prev => ({ ...prev, [pipeline.id]: true }));
+                          try {
+                            const res = await testLLMPipeline(pipeline.id);
+                            setPipelineHealth(prev => ({ ...prev, [pipeline.id]: res }));
+                            if (res.healthy) {
+                              toast.success(`Pipeline healthy! Stage 1: ${res.stage1_latency_ms}ms · Stage 2: ${res.stage2_latency_ms}ms`);
+                            } else {
+                              toast.error(res.error || 'Pipeline test failed');
+                            }
+                          } catch (e) {
+                            setPipelineHealth(prev => ({ ...prev, [pipeline.id]: { healthy: false, error: e.message } }));
+                            toast.error('Pipeline test failed');
+                          }
+                          setPipelineTestLoading(prev => ({ ...prev, [pipeline.id]: false }));
+                        }}
+                        className={`flex items-center px-3 py-1.5 text-xs rounded-md transition-colors ${
+                          pipelineTestLoading[pipeline.id]
+                            ? 'bg-blue-100 text-blue-700 cursor-wait'
+                            : pipelineHealth[pipeline.id]?.healthy === true
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200'
+                            : pipelineHealth[pipeline.id]?.healthy === false
+                            ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                      >
+                        {pipelineTestLoading[pipeline.id] ? (
+                          <span className="inline-flex items-center">
+                            <span className="w-3 h-3 mr-2 border-2 border-blue-400 border-t-transparent rounded-full animate-spin"></span>
+                            Testing...
+                          </span>
+                        ) : pipelineHealth[pipeline.id]?.healthy === true ? (
+                          <span className="inline-flex items-center">
+                            <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Healthy
+                          </span>
+                        ) : pipelineHealth[pipeline.id]?.healthy === false ? (
+                          <span className="inline-flex items-center">
+                            <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                            </svg>
+                            Failed
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center">
+                            <svg className="w-3 h-3 mr-1.5" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                            </svg>
+                            Test
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => setPipelineModal({ open: true, mode: 'edit', config: pipeline })}
+                        className="flex items-center px-2 py-1.5 text-xs bg-indigo-100 text-indigo-700 rounded-md hover:bg-indigo-200 transition-colors"
+                      >
+                        <Edit className="h-4 w-4 mr-1" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeletePipeline(pipeline.id)}
+                        className="flex items-center px-2 py-1.5 text-xs bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors"
+                        title="Delete pipeline"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {llmPipelines.length === 0 && (
+              <div className="px-6 py-10 text-center text-sm text-gray-500">
+                No pipelines configured yet.
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {pipelineModal.open && (
+        <LLMPipelineModal
+          mode={pipelineModal.mode}
+          initial={pipelineModal.config}
+          onClose={() => setPipelineModal({ open: false, mode: 'create', config: null })}
+          onCreate={(payload) => handleCreatePipeline(payload)}
+          onUpdate={(id, payload) => handleUpdatePipeline(id, payload)}
         />
       )}
     </div>
@@ -1522,6 +1767,349 @@ const LLMConfigModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate 
             <span className={`text-sm font-medium ${form.enabled ? 'text-green-700' : 'text-red-700'}`}>
               {form.enabled ? 'Enabled' : 'Disabled'}
             </span>
+          </div>
+
+          <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">
+            <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-md hover:bg-gray-200">Cancel</button>
+            <button onClick={handleSave} className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700">
+              <Save className="h-4 w-4 mr-2" />
+              {mode === 'create' ? 'Create' : 'Save Changes'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const LLMPipelineModal = ({ mode = 'create', initial, onClose, onCreate, onUpdate }) => {
+  const [form, setForm] = useState({
+    name: initial?.name || '',
+    priority: initial?.priority ?? 100,
+    enabled: initial?.enabled ?? true,
+    stage1_model_name: initial?.stage1_model_name || '',
+    stage1_api_url: initial?.stage1_api_url || '',
+    stage1_api_key: '',
+    stage1_prompt: initial?.stage1_prompt || '',
+    stage1_max_tokens: initial?.stage1_max_tokens ?? 2000,
+    stage1_temperature: initial?.stage1_temperature ?? 0.7,
+    stage1_top_p: initial?.stage1_top_p ?? 1.0,
+    stage1_include_image: initial?.stage1_include_image ?? true,
+    stage2_model_name: initial?.stage2_model_name || '',
+    stage2_api_url: initial?.stage2_api_url || '',
+    stage2_api_key: '',
+    stage2_prompt: initial?.stage2_prompt || '',
+    stage2_max_tokens: initial?.stage2_max_tokens ?? 2000,
+    stage2_temperature: initial?.stage2_temperature ?? 0.7,
+    stage2_top_p: initial?.stage2_top_p ?? 1.0,
+    stage2_include_image: initial?.stage2_include_image ?? false
+  });
+
+  const hasStage1Key = !!initial?.stage1_has_api_key;
+  const hasStage2Key = !!initial?.stage2_has_api_key;
+
+  const handleSave = async () => {
+    if (!form.name.trim()) { alert('Name is required'); return; }
+    if (!form.stage1_model_name || !form.stage1_api_url) { alert('Stage 1 model and API URL are required'); return; }
+    if (!form.stage2_model_name || !form.stage2_api_url) { alert('Stage 2 model and API URL are required'); return; }
+    if (mode === 'create' && !form.stage1_api_key) { alert('Stage 1 API key is required'); return; }
+    if (mode === 'create' && !form.stage2_api_key) { alert('Stage 2 API key is required'); return; }
+
+    const payload = {
+      name: form.name.trim(),
+      priority: parseInt(form.priority || 1),
+      enabled: !!form.enabled,
+      stage1_model_name: form.stage1_model_name,
+      stage1_api_url: form.stage1_api_url,
+      stage1_api_key: form.stage1_api_key,
+      stage1_prompt: form.stage1_prompt || null,
+      stage1_max_tokens: parseInt(form.stage1_max_tokens || 256),
+      stage1_temperature: parseFloat(form.stage1_temperature || 0),
+      stage1_top_p: parseFloat(form.stage1_top_p || 1),
+      stage1_include_image: !!form.stage1_include_image,
+      stage2_model_name: form.stage2_model_name,
+      stage2_api_url: form.stage2_api_url,
+      stage2_api_key: form.stage2_api_key,
+      stage2_prompt: form.stage2_prompt || null,
+      stage2_max_tokens: parseInt(form.stage2_max_tokens || 256),
+      stage2_temperature: parseFloat(form.stage2_temperature || 0),
+      stage2_top_p: parseFloat(form.stage2_top_p || 1),
+      stage2_include_image: !!form.stage2_include_image
+    };
+
+    try {
+      if (mode === 'create') {
+        await onCreate(payload);
+      } else {
+        const editPayload = { ...payload };
+        if (!form.stage1_api_key) delete editPayload.stage1_api_key;
+        if (!form.stage2_api_key) delete editPayload.stage2_api_key;
+        await onUpdate(initial.id, editPayload);
+      }
+    } catch (_) {}
+  };
+
+  const SectionHeader = ({ title }) => (
+    <div className="flex items-center gap-2 text-sm font-semibold text-gray-900">
+      <GitBranch className="h-4 w-4 text-gray-500" />
+      {title}
+    </div>
+  );
+
+  return (
+    <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 flex items-center justify-center">
+      <div className="relative bg-white rounded-lg shadow-xl max-w-4xl w-full mx-4">
+        <div className="bg-gray-50 px-6 py-4 border-b border-gray-200 rounded-t-lg">
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-semibold text-gray-900">{mode === 'create' ? 'Create LLM Pipeline' : 'Edit LLM Pipeline'}</h3>
+            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 transition-colors">
+              <X className="h-5 w-5" />
+            </button>
+          </div>
+          <p className="text-sm text-gray-600 mt-1">Configure two-stage generation with optional image input per stage</p>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-sm font-medium text-gray-700 mb-2">Pipeline Name</label>
+              <input
+                type="text"
+                value={form.name}
+                onChange={(e) => setForm(prev => ({ ...prev, name: e.target.value }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="e.g., Stage1 Vision + Stage2 Summary"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+              <input
+                type="number"
+                min={1}
+                value={form.priority}
+                onChange={(e) => setForm(prev => ({ ...prev, priority: parseInt(e.target.value || '1') }))}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+              />
+              <p className="text-xs text-gray-500 mt-1">Lower runs first</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-gray-700">Status</label>
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, enabled: !form.enabled })}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${form.enabled ? 'bg-green-500' : 'bg-gray-300'}`}
+              aria-pressed={form.enabled}
+              aria-label="Toggle status"
+            >
+              <span className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${form.enabled ? 'translate-x-5' : 'translate-x-0'}`} />
+            </button>
+            <span className={`text-sm font-medium ${form.enabled ? 'text-green-700' : 'text-red-700'}`}>
+              {form.enabled ? 'Enabled' : 'Disabled'}
+            </span>
+          </div>
+
+          <div className="space-y-4">
+            <SectionHeader title="Stage 1" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Model Name</label>
+                <input
+                  type="text"
+                  value={form.stage1_model_name}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_model_name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">API URL</label>
+                <input
+                  type="url"
+                  value={form.stage1_api_url}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_api_url: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                <input
+                  type="password"
+                  value={form.stage1_api_key}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_api_key: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Authorization: Bearer <token> or key:value"
+                />
+                {mode === 'edit' && hasStage1Key && (
+                  <div className="mt-2 text-xs bg-green-50 text-green-800 border border-green-200 rounded-md p-2">
+                    <span className="font-medium">Stage 1 API key stored.</span> Leave blank to keep it.
+                  </div>
+                )}
+                {mode === 'edit' && !hasStage1Key && (
+                  <div className="mt-2 text-xs bg-red-50 text-red-700 border border-red-200 rounded-md p-2">
+                    <span className="font-medium">No Stage 1 API key stored.</span> Enter one to enable calls.
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Temperature</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={form.stage1_temperature}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_temperature: parseFloat(e.target.value) }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Max Tokens</label>
+                <input
+                  type="number"
+                  min={256}
+                  max={4096}
+                  step={1}
+                  value={form.stage1_max_tokens}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_max_tokens: parseInt(e.target.value || '256') }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Top-p</label>
+                <input
+                  type="number"
+                  min={0.1}
+                  max={1}
+                  step={0.1}
+                  value={form.stage1_top_p}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_top_p: parseFloat(e.target.value) }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-7">
+                <input
+                  id="stage1IncludeImage"
+                  type="checkbox"
+                  checked={form.stage1_include_image}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage1_include_image: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <label htmlFor="stage1IncludeImage" className="text-sm text-gray-700">Include Image</label>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Stage 1 Prompt</label>
+              <textarea
+                value={form.stage1_prompt}
+                onChange={(e) => setForm(prev => ({ ...prev, stage1_prompt: e.target.value }))}
+                className="w-full h-32 border border-gray-300 rounded-md p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Optional prompt template for Stage 1"
+              />
+            </div>
+          </div>
+
+          <div className="space-y-4">
+            <SectionHeader title="Stage 2" />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Model Name</label>
+                <input
+                  type="text"
+                  value={form.stage2_model_name}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_model_name: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">API URL</label>
+                <input
+                  type="url"
+                  value={form.stage2_api_url}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_api_url: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-medium text-gray-700 mb-2">API Key</label>
+                <input
+                  type="password"
+                  value={form.stage2_api_key}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_api_key: e.target.value }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  placeholder="Authorization: Bearer <token> or key:value"
+                />
+                {mode === 'edit' && hasStage2Key && (
+                  <div className="mt-2 text-xs bg-green-50 text-green-800 border border-green-200 rounded-md p-2">
+                    <span className="font-medium">Stage 2 API key stored.</span> Leave blank to keep it.
+                  </div>
+                )}
+                {mode === 'edit' && !hasStage2Key && (
+                  <div className="mt-2 text-xs bg-red-50 text-red-700 border border-red-200 rounded-md p-2">
+                    <span className="font-medium">No Stage 2 API key stored.</span> Enter one to enable calls.
+                  </div>
+                )}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Temperature</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={1}
+                  step={0.1}
+                  value={form.stage2_temperature}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_temperature: parseFloat(e.target.value) }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Max Tokens</label>
+                <input
+                  type="number"
+                  min={256}
+                  max={4096}
+                  step={1}
+                  value={form.stage2_max_tokens}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_max_tokens: parseInt(e.target.value || '256') }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Top-p</label>
+                <input
+                  type="number"
+                  min={0.1}
+                  max={1}
+                  step={0.1}
+                  value={form.stage2_top_p}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_top_p: parseFloat(e.target.value) }))}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div className="flex items-center gap-2 pt-7">
+                <input
+                  id="stage2IncludeImage"
+                  type="checkbox"
+                  checked={form.stage2_include_image}
+                  onChange={(e) => setForm(prev => ({ ...prev, stage2_include_image: e.target.checked }))}
+                  className="rounded border-gray-300"
+                />
+                <label htmlFor="stage2IncludeImage" className="text-sm text-gray-700">Include Image</label>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Stage 2 Prompt</label>
+              <textarea
+                value={form.stage2_prompt}
+                onChange={(e) => setForm(prev => ({ ...prev, stage2_prompt: e.target.value }))}
+                className="w-full h-32 border border-gray-300 rounded-md p-3 focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                placeholder="Optional prompt template for Stage 2"
+              />
+            </div>
           </div>
 
           <div className="flex justify-end space-x-3 pt-4 border-t border-gray-200">

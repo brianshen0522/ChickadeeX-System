@@ -997,10 +997,11 @@ router.post('/:uploadId/generate', async (req, res) => {
             });
         }
 
+        const queryPayload = req.query || {};
         const payload = {
-            studyDescription: req.body?.study_description || uploadRow.original_filename,
-            modality: resolvedModality,
-            clinicalContext: req.body?.clinical_context || '',
+            studyDescription: queryPayload.study_description || uploadRow.original_filename,
+            modality: queryPayload.modality || resolvedModality,
+            clinicalContext: queryPayload.clinical_context || '',
             dicom: {
                 studyInstanceUID: uploadRow.study_instance_uid || uploadRow.id,
                 downloadUrl,
@@ -1027,6 +1028,184 @@ router.post('/:uploadId/generate', async (req, res) => {
             return res.status(400).json({ error: 'Preview image unavailable for AI generation' });
         }
         res.status(500).json({ error: 'AI generation failed' });
+    }
+});
+
+// Generate AI report preview via SSE (real-time stage progress)
+router.get('/:uploadId/generate-stream', async (req, res) => {
+    // SSE headers
+    res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no'
+    });
+
+    const sendEvent = (event, data) => {
+        res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+        await ensureUploadsTable();
+        const db = getDB();
+
+        const uploadRows = await selectUploadRowsWithFallback(
+            db,
+            `SELECT id, original_filename, mime_type, stored_filename, converted_image_path, is_dicom, dicom_metadata, study_instance_uid, modality
+             FROM uploads
+             WHERE id = $1
+               AND user_id = $2
+               AND status = 'ready'`,
+            [req.params.uploadId, req.user.id],
+            `SELECT id, original_filename, mime_type, stored_filename
+             FROM uploads
+             WHERE id = $1
+               AND user_id = $2
+               AND status = 'ready'`,
+            (row) => ({
+                id: row.id,
+                original_filename: row.original_filename,
+                mime_type: row.mime_type,
+                stored_filename: row.stored_filename,
+                converted_image_path: null,
+                is_dicom: false,
+                dicom_metadata: null,
+                study_instance_uid: null,
+                modality: null
+            })
+        );
+
+        if (uploadRows.length === 0) {
+            sendEvent('error', { message: 'Upload not found' });
+            sendEvent('done', {});
+            res.end();
+            return;
+        }
+
+        const uploadRow = uploadRows[0];
+        const dicomMetadata = parseDicomMetadata(uploadRow.dicom_metadata);
+        const originalFilePath = uploadRow.stored_filename
+            ? resolveUploadPath(uploadRow.stored_filename)
+            : null;
+
+        const host = `${req.protocol}://${req.get('host')}`;
+        const downloadUrl = `${host}/api/uploads/${uploadRow.id}/file`;
+        let imageUrl = downloadUrl;
+        let convertedMimeType = 'image/jpeg';
+        let imagePath = null;
+
+        const isDicom = uploadRow.is_dicom || (uploadRow.mime_type === 'application/dicom') || Boolean(dicomMetadata);
+        const resolvedModality = resolveUploadModality({
+            isDicom,
+            dicomMetadata,
+            storedModality: uploadRow.modality,
+            providedModality: req.body?.modality
+        });
+
+        if (!isDicom) {
+            convertedMimeType = uploadRow.mime_type || 'image/jpeg';
+            if (originalFilePath && fs.existsSync(originalFilePath)) {
+                imagePath = originalFilePath;
+            }
+        }
+
+        if (isDicom && originalFilePath && fs.existsSync(originalFilePath)) {
+            let convertedPath = uploadRow.converted_image_path;
+            if (!convertedPath) {
+                try {
+                    const outputDir = path.dirname(originalFilePath);
+                    const baseFileName = path.parse(uploadRow.stored_filename).name;
+                    const convertedAbsolutePath = await convertDicomToImage(
+                        originalFilePath,
+                        outputDir,
+                        baseFileName
+                    );
+                    convertedPath = path.relative(UPLOAD_ROOT, convertedAbsolutePath);
+                    imagePath = convertedAbsolutePath;
+                    try {
+                        await db.query(
+                            `UPDATE uploads
+                             SET converted_image_path = $1,
+                                 updated_at = CURRENT_TIMESTAMP
+                             WHERE id = $2`,
+                            [convertedPath, uploadRow.id]
+                        );
+                    } catch (updateError) {
+                        if (updateError.code !== '42703') {
+                            logger.warn('Failed to persist converted image path for upload', {
+                                uploadId: uploadRow.id,
+                                updateError
+                            });
+                        }
+                    }
+                } catch (conversionError) {
+                    logger.warn('DICOM conversion failed during AI generation', {
+                        uploadId: uploadRow.id,
+                        error: conversionError
+                    });
+                }
+            } else {
+                const absoluteConverted = resolveUploadPath(convertedPath);
+                if (fs.existsSync(absoluteConverted)) {
+                    imagePath = absoluteConverted;
+                }
+            }
+
+            if (convertedPath) {
+                imageUrl = `${host}/api/uploads/${uploadRow.id}/converted`;
+                const ext = path.extname(convertedPath).toLowerCase();
+                if (ext === '.png') convertedMimeType = 'image/png';
+                else if (ext === '.webp') convertedMimeType = 'image/webp';
+                else convertedMimeType = 'image/jpeg';
+            }
+        }
+
+        if (isDicom && (!imageUrl || imageUrl === downloadUrl)) {
+            sendEvent('error', { message: 'Unable to generate preview image for this DICOM study. Please re-upload the file or contact support.' });
+            sendEvent('done', {});
+            res.end();
+            return;
+        }
+
+        const payload = {
+            studyDescription: req.body?.study_description || uploadRow.original_filename,
+            modality: resolvedModality,
+            clinicalContext: req.body?.clinical_context || '',
+            dicom: {
+                studyInstanceUID: uploadRow.study_instance_uid || uploadRow.id,
+                downloadUrl,
+                imageUrl,
+                imageMimeType: convertedMimeType,
+                studyUrl: downloadUrl,
+                imagePath: imagePath || ''
+            }
+        };
+
+        const onStageEvent = (event) => {
+            sendEvent('stage', event);
+        };
+
+        const aiResult = await generateAIReport(payload, onStageEvent);
+
+        await createAuditLog(req.user.id, 'upload_ai_generated', 'upload', uploadRow.id, {
+            original_filename: uploadRow.original_filename,
+            model_used: aiResult?.model_used,
+            ip: req.ip,
+            user_agent: req.get('User-Agent')
+        });
+
+        sendEvent('result', aiResult);
+        sendEvent('done', {});
+        res.end();
+    } catch (error) {
+        logger.error('Upload AI generation failed:', error);
+        if (error && /image preview required/i.test(error.message || '')) {
+            sendEvent('error', { message: 'Preview image unavailable for AI generation' });
+        } else {
+            sendEvent('error', { message: error.message || 'AI generation failed' });
+        }
+        sendEvent('done', {});
+        res.end();
     }
 });
 

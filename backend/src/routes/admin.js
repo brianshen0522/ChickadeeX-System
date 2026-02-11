@@ -195,4 +195,64 @@ router.post('/llm-configs/:configId/test',
     }
 );
 
+// ===== LLM Pipeline Routes =====
+
+router.get('/llm-pipelines', async (req, res, next) => {
+    try {
+        const pipelines = await adminService.listLlmPipelines();
+        res.json(pipelines);
+    } catch (error) {
+        next(error);
+    }
+});
+
+router.post('/llm-pipelines',
+    validateRequest(schemas.llmPipeline),
+    async (req, res, next) => {
+        try {
+            const pipeline = await adminService.createLlmPipeline(req);
+            res.status(201).json(pipeline);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.put('/llm-pipelines/:pipelineId',
+    validateParams({ pipelineId: schemas.uuid }),
+    async (req, res, next) => {
+        try {
+            const pipeline = await adminService.updateLlmPipeline(req);
+            res.json(pipeline);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.delete('/llm-pipelines/:pipelineId',
+    validateParams({ pipelineId: schemas.uuid }),
+    async (req, res, next) => {
+        try {
+            const result = await adminService.deleteLlmPipeline(req);
+            res.json(result);
+        } catch (error) {
+            next(error);
+        }
+    }
+);
+
+router.post('/llm-pipelines/:pipelineId/test',
+    validateParams({ pipelineId: schemas.uuid }),
+    async (req, res) => {
+        try {
+            const result = await adminService.testLlmPipeline(req);
+            res.json(result);
+        } catch (error) {
+            const message = adminService.extractLLMTestError(error);
+            res.status(200).json({ healthy: false, error: message });
+        }
+    }
+);
+
 module.exports = router;

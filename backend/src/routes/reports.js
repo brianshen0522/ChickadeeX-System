@@ -481,6 +481,113 @@ router.post('/:reportId/generate-preview',
     }
 );
 
+// Generate AI report preview via SSE (real-time stage progress)
+router.get('/:reportId/generate-preview-stream',
+    requireAnyRole(['doctor']),
+    validateParams({ reportId: schemas.uuid }),
+    async (req, res) => {
+        // SSE headers
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+
+        const sendEvent = (event, data) => {
+            res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+        };
+
+        try {
+            const { reportId } = req.params;
+            const db = getDB();
+
+            // Reuse availability check
+            const llmCheckRes = await db.query(`
+                SELECT COUNT(*) as count FROM (
+                    SELECT id FROM llm_configs WHERE enabled = true
+                    UNION ALL
+                    SELECT id FROM llm_pipelines WHERE enabled = true
+                ) combined
+            `);
+            const availableModels = parseInt(llmCheckRes.rows[0]?.count || 0);
+            if (availableModels === 0) {
+                sendEvent('error', { message: 'No LLM models available. Please configure and enable at least one LLM model in the admin panel.' });
+                sendEvent('done', {});
+                res.end();
+                return;
+            }
+
+            // Resolve report
+            const reportQuery = `
+                SELECT r.*,
+                    (SELECT findings || '\n\n' || impression
+                     FROM report_versions rv
+                     WHERE rv.report_id = r.id
+                     ORDER BY rv.version_no DESC
+                     LIMIT 1) as previous_content
+                FROM reports r
+                WHERE r.id = $1 AND r.doctor_id = $2
+            `;
+            const reportResult = await db.query(reportQuery, [reportId, req.user.id]);
+            if (reportResult.rows.length === 0) {
+                sendEvent('error', { message: 'Report not found' });
+                sendEvent('done', {});
+                res.end();
+                return;
+            }
+
+            const report = reportResult.rows[0];
+            let dicom = { studyInstanceUID: report.study_instance_uid, imagePath: '' };
+            try {
+                const pacs = await db.query('SELECT pacs_url FROM pacs_config LIMIT 1');
+                if (pacs.rows.length && pacs.rows[0].pacs_url) {
+                    const base = String(pacs.rows[0].pacs_url || '').replace(/\/*$/, '');
+                    const studiesBase = /\/studies$/i.test(base) ? base : `${base}/studies`;
+                    dicom.studyUrl = `${studiesBase}/${encodeURIComponent(report.study_instance_uid)}`;
+                }
+            } catch (_) {}
+            const hostOrigin = `${req.protocol}://${req.get('host')}`;
+            dicom.downloadUrl = `${hostOrigin}/api/dicom/studies/${encodeURIComponent(report.study_instance_uid)}/download`;
+
+            const preview = await resolveUploadPreview(db, report.study_instance_uid, hostOrigin);
+            if (preview) {
+                dicom.downloadUrl = preview.downloadUrl || dicom.downloadUrl;
+                dicom.imageUrl = preview.imageUrl || '';
+                dicom.imageMimeType = preview.imageMimeType || 'image/jpeg';
+                dicom.imagePath = preview.imagePath || '';
+            } else {
+                dicom.imageUrl = '';
+                dicom.imageMimeType = 'image/jpeg';
+                dicom.imagePath = '';
+            }
+
+            // Generate with stage event callback
+            const onStageEvent = (event) => {
+                sendEvent('stage', event);
+            };
+
+            const aiResult = await generateAIReport({
+                studyDescription: report.study_description,
+                modality: report.modality,
+                clinicalContext: report.clinical_context || '',
+                previousContent: report.previous_content,
+                dicom
+            }, onStageEvent);
+
+            sendEvent('result', aiResult);
+            sendEvent('done', {});
+            res.end();
+
+        } catch (error) {
+            logger.error('SSE generate-preview-stream error:', error);
+            sendEvent('error', { message: error.message || 'AI generation failed' });
+            sendEvent('done', {});
+            res.end();
+        }
+    }
+);
+
 // Generate AI report version
 router.post('/:reportId/generate',
     requireAnyRole(['doctor']),

@@ -66,6 +66,32 @@ export const listProviderModels = async (provider, apiKey, endpoint) => {
   return response.data; // { provider, models: [{id}] }
 };
 
+// LLM Pipelines
+export const getLLMPipelines = async () => {
+  const response = await api.get('/admin/llm-pipelines');
+  return response.data;
+};
+
+export const createLLMPipeline = async (pipelineData) => {
+  const response = await api.post('/admin/llm-pipelines', pipelineData);
+  return response.data;
+};
+
+export const updateLLMPipeline = async (pipelineId, pipelineData) => {
+  const response = await api.put(`/admin/llm-pipelines/${pipelineId}`, pipelineData);
+  return response.data;
+};
+
+export const testLLMPipeline = async (pipelineId) => {
+  const response = await api.post(`/admin/llm-pipelines/${pipelineId}/test`);
+  return response.data;
+};
+
+export const deleteLLMPipeline = async (pipelineId) => {
+  const response = await api.delete(`/admin/llm-pipelines/${pipelineId}`);
+  return response.data;
+};
+
 // System flags
 export const getSystemSettings = async () => {
   const response = await api.get('/admin/system-settings');

@@ -158,6 +158,39 @@ CREATE TABLE llm_configs (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Create llm_pipelines table (two-stage LLM pipelines)
+CREATE TABLE IF NOT EXISTS llm_pipelines (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    name TEXT NOT NULL,
+    priority INTEGER NOT NULL DEFAULT 100,
+    enabled BOOLEAN DEFAULT true,
+
+    -- Stage 1 configuration
+    stage1_model_name VARCHAR(100) NOT NULL,
+    stage1_api_url TEXT NOT NULL,
+    stage1_api_key TEXT NOT NULL,
+    stage1_prompt TEXT,
+    stage1_max_tokens INTEGER DEFAULT 2000,
+    stage1_temperature DECIMAL(3,2) DEFAULT 0.7,
+    stage1_top_p DECIMAL(3,2) DEFAULT 1.0,
+    stage1_include_image BOOLEAN DEFAULT true,
+
+    -- Stage 2 configuration
+    stage2_model_name VARCHAR(100) NOT NULL,
+    stage2_api_url TEXT NOT NULL,
+    stage2_api_key TEXT NOT NULL,
+    stage2_prompt TEXT,
+    stage2_max_tokens INTEGER DEFAULT 2000,
+    stage2_temperature DECIMAL(3,2) DEFAULT 0.7,
+    stage2_top_p DECIMAL(3,2) DEFAULT 1.0,
+    stage2_include_image BOOLEAN DEFAULT false,
+
+    created_by UUID REFERENCES users(id),
+    updated_by UUID REFERENCES users(id),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Create pacs_config table (singleton)
 CREATE TABLE pacs_config (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -229,6 +262,7 @@ CREATE INDEX idx_reports_tags ON reports USING GIN(tags);
 CREATE INDEX idx_report_versions_report_id ON report_versions(report_id);
 CREATE INDEX idx_report_versions_created_at ON report_versions(created_at);
 CREATE INDEX idx_llm_configs_enabled_priority ON llm_configs(enabled, priority);
+CREATE INDEX idx_llm_pipelines_enabled_priority ON llm_pipelines(enabled, priority);
 CREATE INDEX idx_audit_logs_user_id ON audit_logs(user_id);
 CREATE INDEX idx_audit_logs_timestamp ON audit_logs(timestamp);
 CREATE INDEX idx_audit_logs_action ON audit_logs(action);
@@ -251,6 +285,8 @@ CREATE TRIGGER update_roles_updated_at BEFORE UPDATE ON roles
 CREATE TRIGGER update_reports_updated_at BEFORE UPDATE ON reports 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_llm_configs_updated_at BEFORE UPDATE ON llm_configs 
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+CREATE TRIGGER update_llm_pipelines_updated_at BEFORE UPDATE ON llm_pipelines
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_pacs_config_updated_at BEFORE UPDATE ON pacs_config 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

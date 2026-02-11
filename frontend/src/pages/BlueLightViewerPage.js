@@ -7,7 +7,7 @@ import {
   getReport,
   createReport,
   createReportVersion,
-  generateReportPreview,
+  generateReportPreviewStream,
   updateReportDescription
 } from '../services/reportService';
 import { resolveBlueLightStartUrl } from '../utils/bluelight';
@@ -41,6 +41,8 @@ const BlueLightViewerPage = () => {
   const [lastSavedDescription, setLastSavedDescription] = useState('');
   const [descriptionDirty, setDescriptionDirty] = useState(false);
   const [descriptionSaving, setDescriptionSaving] = useState(false);
+  const [generationStages, setGenerationStages] = useState({}); // { [stage]: {stage, status, total, model} }
+  const [generationTotal, setGenerationTotal] = useState(null);
 
   const normalizedPatientName = useMemo(() => {
     const raw = (patientNameFromQuery || '').trim();
@@ -257,25 +259,67 @@ const BlueLightViewerPage = () => {
     }
     try {
       setLoading(true);
+      setGenerationStages({});
+      setGenerationTotal(null);
       const id = await ensureReportExists();
-      const aiContent = await generateReportPreview(id);
-      setAiGeneratedContent(aiContent);
-      const findings = Array.isArray(aiContent.findings) ? aiContent.findings.join('\n') : (aiContent.findings || '');
-      const impression = Array.isArray(aiContent.impression) ? aiContent.impression.join('\n') : (aiContent.impression || '');
-      setFindingText(findings);
-      setImpressionText(impression);
-      setIsAiMode(true);
-      setHasUnsavedChanges(true);
-      toast.success(
-        aiContent.model_config
-          ? `AI content generated using ${aiContent.model_config.provider || aiContent.model_config.name}.`
-          : 'AI content generated.'
-      );
+
+      // Try SSE stream first for real-time progress
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId;
+        const cleanup = generateReportPreviewStream(id, {
+          onStage: (event) => {
+            setGenerationStages((prev) => ({ ...prev, [event.stage]: event }));
+            if (event.total) setGenerationTotal(event.total);
+          },
+          onResult: (aiContent) => {
+            setAiGeneratedContent(aiContent);
+            const findings = Array.isArray(aiContent.findings) ? aiContent.findings.join('\n') : (aiContent.findings || '');
+            const impression = Array.isArray(aiContent.impression) ? aiContent.impression.join('\n') : (aiContent.impression || '');
+            setFindingText(findings);
+            setImpressionText(impression);
+            setIsAiMode(true);
+            setHasUnsavedChanges(true);
+            toast.success(
+              aiContent.model_config
+                ? `AI content generated using ${aiContent.model_config.provider || aiContent.model_config.name}.`
+                : 'AI content generated.'
+            );
+          },
+          onError: (data) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            cleanup();
+            reject(new Error(data.message || 'AI generation failed'));
+          },
+          onDone: () => {
+            if (settled) return;
+            settled = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            cleanup();
+            resolve();
+          }
+        });
+
+        // Cleanup on unmount / timeout safety
+        timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error('Generation timed out'));
+        }, 600000); // 10 min timeout
+      });
     } catch (error) {
-      const message = error?.response?.data?.error || 'AI generation failed';
-      toast.error(message);
+      const message = error?.message || 'AI generation failed';
+      // Only show error toast if we don't already have a result
+      if (!isAiMode) {
+        toast.error(message);
+      }
     } finally {
       setLoading(false);
+      setGenerationStages({});
+      setGenerationTotal(null);
     }
   };
 
@@ -514,6 +558,35 @@ const BlueLightViewerPage = () => {
                   </div>
                 </div>
               </div>
+              {(generationStages[1] || generationStages[2]) && (
+                <div className="mt-1 space-y-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[0.7rem] text-slate-600">
+                  {[1, 2].map((stage) => {
+                    const event = generationStages[stage];
+                    if (!event) {
+                      return (
+                        <div key={stage} className="flex items-center gap-2 opacity-50">
+                          <Loader2 className="h-3.5 w-3.5 text-slate-400" />
+                          <span>Stage {stage} pending</span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div key={stage} className="flex items-center gap-2">
+                        {event.status === 'running' ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
+                        ) : (
+                          <Check className="h-3.5 w-3.5 text-green-600" />
+                        )}
+                        <span className="truncate">
+                          Stage {stage} {event.status === 'running' ? 'running' : 'complete'}
+                          {generationTotal ? ` (${stage}/${generationTotal})` : ''}
+                          {event.model ? ` · ${event.model}` : ''}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-4 py-3 space-y-3">

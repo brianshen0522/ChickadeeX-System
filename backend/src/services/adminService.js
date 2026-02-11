@@ -275,6 +275,8 @@ const deleteUser = async (req) => {
         await client.query('UPDATE audit_logs SET user_id = NULL WHERE user_id = $1', [userId]);
         await client.query('UPDATE llm_configs SET created_by = NULL WHERE created_by = $1', [userId]);
         await client.query('UPDATE llm_configs SET updated_by = NULL WHERE updated_by = $1', [userId]);
+        await client.query('UPDATE llm_pipelines SET created_by = NULL WHERE created_by = $1', [userId]);
+        await client.query('UPDATE llm_pipelines SET updated_by = NULL WHERE updated_by = $1', [userId]);
         await client.query('UPDATE pacs_config SET updated_by = NULL WHERE updated_by = $1', [userId]);
         await client.query('UPDATE rag_config SET updated_by = NULL WHERE updated_by = $1', [userId]);
         await client.query('UPDATE system_settings SET updated_by = NULL WHERE updated_by = $1', [userId]);
@@ -743,6 +745,254 @@ const testLlmConfig = async (req) => {
     return { healthy: true, latency_ms: latency, model_name: cfg.model_name };
 };
 
+// ===== LLM Pipeline CRUD =====
+
+const listLlmPipelines = async () => {
+    const db = getDB();
+    const query = `
+        SELECT id, name, priority, enabled,
+               stage1_model_name, stage1_api_url, stage1_prompt, stage1_max_tokens, stage1_temperature, stage1_top_p, stage1_include_image,
+               (stage1_api_key IS NOT NULL) AS stage1_has_api_key,
+               stage2_model_name, stage2_api_url, stage2_prompt, stage2_max_tokens, stage2_temperature, stage2_top_p, stage2_include_image,
+               (stage2_api_key IS NOT NULL) AS stage2_has_api_key,
+               updated_at
+        FROM llm_pipelines
+        ORDER BY priority ASC
+    `;
+    const result = await db.query(query);
+    return result.rows;
+};
+
+const createLlmPipeline = async (req) => {
+    const {
+        name,
+        priority = 100,
+        enabled = true,
+        stage1_model_name, stage1_api_url, stage1_api_key, stage1_prompt = null,
+        stage1_max_tokens = 2000, stage1_temperature = 0.7, stage1_top_p = 1.0, stage1_include_image = true,
+        stage2_model_name, stage2_api_url, stage2_api_key, stage2_prompt = null,
+        stage2_max_tokens = 2000, stage2_temperature = 0.7, stage2_top_p = 1.0, stage2_include_image = false
+    } = req.body;
+
+    const db = getDB();
+
+    const query = `
+        INSERT INTO llm_pipelines (
+            name, priority, enabled,
+            stage1_model_name, stage1_api_url, stage1_api_key, stage1_prompt,
+            stage1_max_tokens, stage1_temperature, stage1_top_p, stage1_include_image,
+            stage2_model_name, stage2_api_url, stage2_api_key, stage2_prompt,
+            stage2_max_tokens, stage2_temperature, stage2_top_p, stage2_include_image,
+            created_by, updated_by
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$20)
+        RETURNING id, name, priority, enabled,
+                  stage1_model_name, stage1_api_url, stage1_prompt, stage1_max_tokens, stage1_temperature, stage1_top_p, stage1_include_image,
+                  (stage1_api_key IS NOT NULL) AS stage1_has_api_key,
+                  stage2_model_name, stage2_api_url, stage2_prompt, stage2_max_tokens, stage2_temperature, stage2_top_p, stage2_include_image,
+                  (stage2_api_key IS NOT NULL) AS stage2_has_api_key,
+                  created_at
+    `;
+
+    const result = await db.query(query, [
+        name, priority, enabled,
+        stage1_model_name, stage1_api_url, encryptSecret(stage1_api_key), stage1_prompt,
+        stage1_max_tokens, stage1_temperature, stage1_top_p, stage1_include_image,
+        stage2_model_name, stage2_api_url, encryptSecret(stage2_api_key), stage2_prompt,
+        stage2_max_tokens, stage2_temperature, stage2_top_p, stage2_include_image,
+        req.user.id
+    ]);
+
+    await createAuditLog(req.user.id, 'llm_pipeline_created', 'llm_pipeline', result.rows[0].id, {
+        name,
+        ip: req.ip,
+        user_agent: req.get('User-Agent')
+    });
+
+    // Auto-test stage 1 if enabled
+    let testResult = null;
+    if (stage1_api_key && enabled) {
+        try {
+            const start = Date.now();
+            await callLLM({
+                model_name: stage1_model_name,
+                api_url: stage1_api_url,
+                api_key: stage1_api_key,
+                prompt: stage1_prompt,
+                max_tokens: stage1_max_tokens,
+                temperature: stage1_temperature,
+                top_p: stage1_top_p
+            }, {
+                studyDescription: 'Health check',
+                modality: 'GEN',
+                clinicalContext: 'Ping',
+                previousContent: '',
+                dicom: {
+                    imageBase64: LLM_TEST_PLACEHOLDER_IMAGE.base64,
+                    imageMimeType: LLM_TEST_PLACEHOLDER_IMAGE.mimeType,
+                    studyInstanceUID: 'LLM-PIPELINE-AUTOTEST'
+                }
+            });
+            const latency = Date.now() - start;
+            testResult = { healthy: true, latency_ms: latency };
+        } catch (testError) {
+            logger.warn('Auto-test failed for new pipeline stage 1:', testError?.response?.data || testError.message || testError);
+            testResult = { healthy: false, error: 'Stage 1 auto-test failed' };
+        }
+    }
+
+    const response = { ...result.rows[0] };
+    if (testResult) response.test_result = testResult;
+    return response;
+};
+
+const updateLlmPipeline = async (req) => {
+    const { pipelineId } = req.params;
+    const db = getDB();
+
+    const updates = [];
+    const values = [];
+    let paramCount = 0;
+
+    const allowedFields = [
+        'name', 'priority', 'enabled',
+        'stage1_model_name', 'stage1_api_url', 'stage1_api_key', 'stage1_prompt',
+        'stage1_max_tokens', 'stage1_temperature', 'stage1_top_p', 'stage1_include_image',
+        'stage2_model_name', 'stage2_api_url', 'stage2_api_key', 'stage2_prompt',
+        'stage2_max_tokens', 'stage2_temperature', 'stage2_top_p', 'stage2_include_image'
+    ];
+
+    for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+            paramCount++;
+            updates.push(`${field} = $${paramCount}`);
+            if (field === 'stage1_api_key' || field === 'stage2_api_key') {
+                values.push(encryptSecret(req.body[field]));
+            } else {
+                values.push(req.body[field]);
+            }
+        }
+    }
+
+    if (updates.length === 0) {
+        throw new AppError('No valid fields to update', 400, 'NO_UPDATES');
+    }
+
+    paramCount++;
+    updates.push(`updated_by = $${paramCount}`);
+    values.push(req.user.id);
+
+    paramCount++;
+    values.push(pipelineId);
+
+    const query = `
+        UPDATE llm_pipelines
+        SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP
+        WHERE id = $${paramCount}
+        RETURNING id, name, priority, enabled,
+                  stage1_model_name, stage1_api_url, stage1_prompt, stage1_max_tokens, stage1_temperature, stage1_top_p, stage1_include_image,
+                  (stage1_api_key IS NOT NULL) AS stage1_has_api_key,
+                  stage2_model_name, stage2_api_url, stage2_prompt, stage2_max_tokens, stage2_temperature, stage2_top_p, stage2_include_image,
+                  (stage2_api_key IS NOT NULL) AS stage2_has_api_key,
+                  updated_at
+    `;
+
+    const result = await db.query(query, values);
+    if (result.rows.length === 0) {
+        throw new AppError('LLM pipeline not found', 404, 'PIPELINE_NOT_FOUND');
+    }
+
+    await createAuditLog(req.user.id, 'llm_pipeline_updated', 'llm_pipeline', pipelineId, {
+        updates: Object.keys(req.body),
+        ip: req.ip,
+        user_agent: req.get('User-Agent')
+    });
+
+    return result.rows[0];
+};
+
+const deleteLlmPipeline = async (req) => {
+    const { pipelineId } = req.params;
+    const db = getDB();
+    const exists = await db.query('SELECT id FROM llm_pipelines WHERE id = $1', [pipelineId]);
+    if (exists.rows.length === 0) {
+        throw new AppError('LLM pipeline not found', 404, 'PIPELINE_NOT_FOUND');
+    }
+    await db.query('DELETE FROM llm_pipelines WHERE id = $1', [pipelineId]);
+
+    await createAuditLog(req.user.id, 'llm_pipeline_deleted', 'llm_pipeline', pipelineId, {
+        ip: req.ip,
+        user_agent: req.get('User-Agent')
+    });
+
+    return { message: 'LLM pipeline deleted' };
+};
+
+const testLlmPipeline = async (req) => {
+    const { pipelineId } = req.params;
+    const db = getDB();
+    const pRes = await db.query('SELECT * FROM llm_pipelines WHERE id = $1', [pipelineId]);
+    if (pRes.rows.length === 0) {
+        throw new AppError('LLM pipeline not found', 404, 'PIPELINE_NOT_FOUND');
+    }
+
+    const p = pRes.rows[0];
+    const testParams = {
+        studyDescription: 'Health check',
+        modality: 'GEN',
+        clinicalContext: 'Ping',
+        previousContent: '',
+        dicom: {
+            imageBase64: LLM_TEST_PLACEHOLDER_IMAGE.base64,
+            imageMimeType: LLM_TEST_PLACEHOLDER_IMAGE.mimeType,
+            studyInstanceUID: 'LLM-PIPELINE-TEST'
+        }
+    };
+
+    // Test stage 1
+    const start1 = Date.now();
+    const stage1Response = await callLLM({
+        model_name: p.stage1_model_name,
+        api_url: p.stage1_api_url,
+        api_key: decryptSecret(p.stage1_api_key),
+        prompt: p.stage1_prompt,
+        max_tokens: p.stage1_max_tokens,
+        temperature: p.stage1_temperature,
+        top_p: p.stage1_top_p
+    }, testParams);
+    const latency1 = Date.now() - start1;
+
+    // Test stage 2
+    const stage1Findings = Array.isArray(stage1Response.findings) ? stage1Response.findings.join('\n') : (stage1Response.findings || '');
+    const stage1Impression = Array.isArray(stage1Response.impression) ? stage1Response.impression.join('\n') : (stage1Response.impression || '');
+    const stage1Output = `FINDINGS:\n${stage1Findings}\n\nIMPRESSION:\n${stage1Impression}`;
+
+    const start2 = Date.now();
+    await callLLM({
+        model_name: p.stage2_model_name,
+        api_url: p.stage2_api_url,
+        api_key: decryptSecret(p.stage2_api_key),
+        prompt: p.stage2_prompt,
+        max_tokens: p.stage2_max_tokens,
+        temperature: p.stage2_temperature,
+        top_p: p.stage2_top_p
+    }, {
+        ...testParams,
+        previousContent: stage1Output,
+        stage1Output,
+        dicom: p.stage2_include_image ? testParams.dicom : undefined
+    }, { skipImageCheck: !p.stage2_include_image });
+    const latency2 = Date.now() - start2;
+
+    return {
+        healthy: true,
+        stage1_latency_ms: latency1,
+        stage2_latency_ms: latency2,
+        total_latency_ms: latency1 + latency2,
+        stage1_model: p.stage1_model_name,
+        stage2_model: p.stage2_model_name
+    };
+};
+
 module.exports = {
     listUsers,
     getUser,
@@ -761,5 +1011,10 @@ module.exports = {
     updatePacsConfig,
     getStatistics,
     testLlmConfig,
-    extractLLMTestError
+    extractLLMTestError,
+    listLlmPipelines,
+    createLlmPipeline,
+    updateLlmPipeline,
+    deleteLlmPipeline,
+    testLlmPipeline
 };

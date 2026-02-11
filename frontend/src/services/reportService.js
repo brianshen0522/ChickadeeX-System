@@ -45,6 +45,44 @@ export const generateReportPreview = async (reportId, params = {}) => {
   return response.data;
 };
 
+export const generateReportPreviewStream = (reportId, { onStage, onResult, onError, onDone } = {}) => {
+  const API_URL = process.env.REACT_APP_API_URL || '';
+  const url = `${API_URL}/api/reports/${reportId}/generate-preview-stream`;
+  const eventSource = new EventSource(url, { withCredentials: true });
+
+  eventSource.addEventListener('stage', (e) => {
+    try { if (onStage) onStage(JSON.parse(e.data)); } catch (_) {}
+  });
+
+  eventSource.addEventListener('result', (e) => {
+    try { if (onResult) onResult(JSON.parse(e.data)); } catch (_) {}
+  });
+
+  eventSource.addEventListener('error', (e) => {
+    try {
+      const data = e.data ? JSON.parse(e.data) : { message: 'Connection error' };
+      if (onError) onError(data);
+    } catch (_) {
+      if (onError) onError({ message: 'Connection error' });
+    }
+  });
+
+  eventSource.addEventListener('done', () => {
+    eventSource.close();
+    if (onDone) onDone();
+  });
+
+  // Handle connection errors
+  eventSource.onerror = () => {
+    eventSource.close();
+    if (onError) onError({ message: 'SSE connection failed' });
+    if (onDone) onDone();
+  };
+
+  // Return close function for cleanup
+  return () => eventSource.close();
+};
+
 export const deleteReport = async (reportId) => {
   const response = await api.delete(`/reports/${reportId}`);
   return response.data;

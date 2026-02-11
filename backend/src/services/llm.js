@@ -65,34 +65,57 @@ const fetchImageAsBase64 = async (source) => {
     throw new Error('Unable to attach preview image for generation');
 };
 
-const generateAIReport = async (params) => {
+const generateAIReport = async (params, onStageEvent = null) => {
     const { studyDescription, modality, clinicalContext, previousContent, dicom } = params;
-    
+
     try {
         const db = getDB();
-        
-        // Get enabled LLM configs ordered by priority (1 = highest priority)
+
+        // Unified priority query: UNION ALL from llm_configs and llm_pipelines
         const query = `
-            SELECT id, name, model_name, api_url, api_key, prompt, priority, 
-                   max_tokens, temperature, top_p
-            FROM llm_configs 
+            SELECT id, name, model_name, api_url, api_key, prompt, priority,
+                   max_tokens, temperature, top_p,
+                   'single' AS config_type,
+                   NULL AS stage1_model_name, NULL AS stage1_api_url, NULL AS stage1_api_key, NULL AS stage1_prompt,
+                   NULL AS stage1_max_tokens, NULL AS stage1_temperature, NULL AS stage1_top_p, NULL::boolean AS stage1_include_image,
+                   NULL AS stage2_model_name, NULL AS stage2_api_url, NULL AS stage2_api_key, NULL AS stage2_prompt,
+                   NULL AS stage2_max_tokens, NULL AS stage2_temperature, NULL AS stage2_top_p, NULL::boolean AS stage2_include_image
+            FROM llm_configs
+            WHERE enabled = true
+            UNION ALL
+            SELECT id, name, NULL AS model_name, NULL AS api_url, NULL AS api_key, NULL AS prompt, priority,
+                   NULL AS max_tokens, NULL AS temperature, NULL AS top_p,
+                   'pipeline' AS config_type,
+                   stage1_model_name, stage1_api_url, stage1_api_key, stage1_prompt,
+                   stage1_max_tokens, stage1_temperature, stage1_top_p, stage1_include_image,
+                   stage2_model_name, stage2_api_url, stage2_api_key, stage2_prompt,
+                   stage2_max_tokens, stage2_temperature, stage2_top_p, stage2_include_image
+            FROM llm_pipelines
             WHERE enabled = true
             ORDER BY priority ASC
         `;
-        
+
         const result = await db.query(query);
-        
+
         if (result.rows.length === 0) {
             throw new Error('No enabled LLM configurations found');
         }
-        
-        // Try each LLM in priority order
-        for (const config of result.rows) {
+
+        // Try each config/pipeline in priority order
+        for (const row of result.rows) {
             try {
-                const decryptedKey = decryptSecret(config.api_key);
-                const configWithKey = { ...config, api_key: decryptedKey };
-                logger.info(`Trying LLM: ${config.name} (priority ${config.priority})`);
-                
+                if (row.config_type === 'pipeline') {
+                    logger.info(`Trying pipeline: ${row.name} (priority ${row.priority})`);
+                    return await executePipeline(row, params, onStageEvent);
+                }
+
+                // Single config
+                const decryptedKey = decryptSecret(row.api_key);
+                const configWithKey = { ...row, api_key: decryptedKey };
+                logger.info(`Trying LLM: ${row.name} (priority ${row.priority})`);
+
+                if (onStageEvent) onStageEvent({ stage: 1, status: 'running', total: 1, model: row.model_name });
+
                 const response = await callLLM(configWithKey, {
                     studyDescription,
                     modality,
@@ -100,34 +123,36 @@ const generateAIReport = async (params) => {
                     previousContent,
                     dicom
                 });
-                
+
+                if (onStageEvent) onStageEvent({ stage: 1, status: 'complete', total: 1, model: row.model_name });
+
                 const isSuccess = typeof response.isSuccess === 'boolean' ? response.isSuccess : true;
                 const message = typeof response.msg === 'string' ? response.msg.trim() : '';
-                
+
                 return {
                     findings: response.findings,
                     impression: response.impression,
-                    model_used: config.model_name,
+                    model_used: row.model_name,
                     model_config: {
-                        name: config.name,
-                        provider: getProviderName(config.api_url),
-                        temperature: config.temperature,
-                        max_tokens: config.max_tokens,
-                        top_p: config.top_p,
-                        priority: config.priority
+                        name: row.name,
+                        provider: getProviderName(row.api_url),
+                        temperature: row.temperature,
+                        max_tokens: row.max_tokens,
+                        top_p: row.top_p,
+                        priority: row.priority
                     },
                     isSuccess,
                     msg: message
                 };
-                
+
             } catch (error) {
-                logger.warn(`LLM ${config.name} failed: ${error.message}`);
-                // Continue to next LLM
+                logger.warn(`LLM ${row.name} failed: ${error.message}`);
+                // Continue to next config/pipeline
             }
         }
-        
+
         throw new Error('All LLM configurations failed');
-        
+
     } catch (error) {
         logger.error('AI report generation failed:', error);
         throw error;
@@ -135,11 +160,91 @@ const generateAIReport = async (params) => {
 };
 
 /**
+ * Execute a two-stage pipeline
+ */
+const executePipeline = async (pipeline, params, onStageEvent = null) => {
+    const { studyDescription, modality, clinicalContext, previousContent, dicom } = params;
+
+    // --- Stage 1 ---
+    const stage1Config = {
+        model_name: pipeline.stage1_model_name,
+        api_url: pipeline.stage1_api_url,
+        api_key: decryptSecret(pipeline.stage1_api_key),
+        prompt: pipeline.stage1_prompt,
+        max_tokens: pipeline.stage1_max_tokens,
+        temperature: pipeline.stage1_temperature,
+        top_p: pipeline.stage1_top_p
+    };
+
+    if (onStageEvent) onStageEvent({ stage: 1, status: 'running', total: 2, model: stage1Config.model_name });
+
+    const stage1Params = {
+        studyDescription,
+        modality,
+        clinicalContext,
+        previousContent,
+        dicom: pipeline.stage1_include_image ? dicom : undefined
+    };
+
+    const stage1Response = await callLLM(stage1Config, stage1Params, { skipImageCheck: !pipeline.stage1_include_image });
+
+    if (onStageEvent) onStageEvent({ stage: 1, status: 'complete', total: 2, model: stage1Config.model_name });
+
+    // Build stage 1 output text for injection into stage 2
+    const stage1Findings = Array.isArray(stage1Response.findings) ? stage1Response.findings.join('\n') : (stage1Response.findings || '');
+    const stage1Impression = Array.isArray(stage1Response.impression) ? stage1Response.impression.join('\n') : (stage1Response.impression || '');
+    const stage1Output = `FINDINGS:\n${stage1Findings}\n\nIMPRESSION:\n${stage1Impression}`;
+
+    // --- Stage 2 ---
+    const stage2Config = {
+        model_name: pipeline.stage2_model_name,
+        api_url: pipeline.stage2_api_url,
+        api_key: decryptSecret(pipeline.stage2_api_key),
+        prompt: pipeline.stage2_prompt,
+        max_tokens: pipeline.stage2_max_tokens,
+        temperature: pipeline.stage2_temperature,
+        top_p: pipeline.stage2_top_p
+    };
+
+    if (onStageEvent) onStageEvent({ stage: 2, status: 'running', total: 2, model: stage2Config.model_name });
+
+    const stage2Params = {
+        studyDescription,
+        modality,
+        clinicalContext,
+        previousContent: stage1Output,
+        dicom: pipeline.stage2_include_image ? dicom : undefined,
+        stage1Output
+    };
+
+    const stage2Response = await callLLM(stage2Config, stage2Params, { skipImageCheck: !pipeline.stage2_include_image });
+
+    if (onStageEvent) onStageEvent({ stage: 2, status: 'complete', total: 2, model: stage2Config.model_name });
+
+    const isSuccess = typeof stage2Response.isSuccess === 'boolean' ? stage2Response.isSuccess : true;
+    const message = typeof stage2Response.msg === 'string' ? stage2Response.msg.trim() : '';
+
+    return {
+        findings: stage2Response.findings,
+        impression: stage2Response.impression,
+        model_used: `${stage1Config.model_name} -> ${stage2Config.model_name}`,
+        model_config: {
+            name: pipeline.name,
+            provider: `${getProviderName(stage1Config.api_url)} -> ${getProviderName(stage2Config.api_url)}`,
+            priority: pipeline.priority
+        },
+        isSuccess,
+        msg: message
+    };
+};
+
+/**
  * Call specific LLM with configuration
  */
-const callLLM = async (config, params) => {
-    const { studyDescription, modality, clinicalContext, previousContent, dicom } = params;
-    
+const callLLM = async (config, params, options = {}) => {
+    const { studyDescription, modality, clinicalContext, previousContent, dicom, stage1Output } = params;
+    const { skipImageCheck = false } = options;
+
     // Build prompt with variables
     const variables = {
         studyDescription: studyDescription || 'Not provided',
@@ -150,18 +255,19 @@ const callLLM = async (config, params) => {
         dicomDownloadUrl: dicom?.downloadUrl || '',
         studyInstanceUID: dicom?.studyInstanceUID || '',
         imagePreviewUrl: dicom?.imageUrl || (dicom?.imageBase64 ? 'inline-preview' : ''),
-        imageMimeType: dicom?.imageMimeType || 'image/jpeg'
+        imageMimeType: dicom?.imageMimeType || 'image/jpeg',
+        stage1Output: stage1Output || ''
     };
-    
+
     // Use config prompt or default
     let systemPrompt = config.prompt || getDefaultPrompt();
-    
+
     // Replace variables in prompt
     Object.entries(variables).forEach(([key, value]) => {
         const regex = new RegExp(`{{\\s*${key}\\s*}}`, 'g');
         systemPrompt = systemPrompt.replace(regex, value);
     });
-    
+
     // Build user prompt with study details
     const userPrompt = `
 Study Information:
@@ -178,17 +284,17 @@ Generate a medical report with findings and impression in the required JSON form
 
     // Determine API type and call
     const hasImage = Boolean(dicom && (dicom.imageUrl || dicom.imagePath || dicom.imageBase64));
-    if (!hasImage) {
+    if (!hasImage && !skipImageCheck) {
         throw new Error('Image preview required for AI generation');
     }
 
     const apiUrl = config.api_url.toLowerCase();
-    const imageDescriptor = {
+    const imageDescriptor = hasImage ? {
         url: dicom?.imageUrl || '',
         mimeType: dicom?.imageMimeType || 'image/jpeg',
         localPath: dicom?.imagePath || '',
         base64: dicom?.imageBase64 || ''
-    };
+    } : {};
     
     if (apiUrl.includes('generativelanguage.googleapis.com')) {
         return await callGeminiAPI(config, systemPrompt, userPrompt, imageDescriptor);
@@ -701,5 +807,6 @@ Rules:
 
 module.exports = {
     generateAIReport,
-    callLLM
+    callLLM,
+    getProviderName
 };

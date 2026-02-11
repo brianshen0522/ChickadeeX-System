@@ -24,7 +24,7 @@ import {
   uploadFile,
   listUploads,
   deleteUpload,
-  generateUploadReport,
+  generateUploadReportStream,
   createReportFromUpload,
   saveReportVersion,
   getUploadReport
@@ -81,6 +81,8 @@ const UploadViewerPage = () => {
     error: null,
     lastSavedAt: null
   });
+  const [generationStages, setGenerationStages] = useState({});
+  const [generationTotal, setGenerationTotal] = useState(null);
   const [showDuplicateDialog, setShowDuplicateDialog] = useState(false);
   const [duplicateVersion, setDuplicateVersion] = useState(null);
   const [pendingSave, setPendingSave] = useState(null);
@@ -691,48 +693,84 @@ const UploadViewerPage = () => {
     }
     setShowSavedIndicator(false);
     setReportState((prev) => ({ ...prev, isGenerating: true, error: null }));
+    setGenerationStages({});
+    setGenerationTotal(null);
 
     try {
-      const result = await generateUploadReport(selectedUpload.id, {
+      const payload = {
         study_description: studyTitle || selectedUpload.originalFilename,
         modality: getModalityLabel(selectedUpload),
         clinical_context: studySummary || ''
+      };
+
+      await new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId;
+        const cleanup = generateUploadReportStream(selectedUpload.id, {
+          payload,
+          onStage: (event) => {
+            setGenerationStages((prev) => ({ ...prev, [event.stage]: event }));
+            if (event.total) setGenerationTotal(event.total);
+          },
+          onResult: (result) => {
+            const resultMessage = typeof result?.msg === 'string' ? result.msg.trim() : '';
+            const generationSucceeded = result?.isSuccess !== false;
+
+            if (!generationSucceeded) {
+              const failureMessage = resultMessage || 'AI generation failed';
+              setReportState((prev) => ({
+                ...prev,
+                findings: '',
+                impression: '',
+                hasUnsavedChanges: false,
+                error: failureMessage
+              }));
+              toast.error(failureMessage);
+              return;
+            }
+
+            const findings = Array.isArray(result.findings) ? result.findings.join('\n') : (result.findings || '');
+            const impression = Array.isArray(result.impression) ? result.impression.join('\n') : (result.impression || '');
+
+            setReportState((prev) => ({
+              ...prev,
+              findings,
+              impression,
+              hasUnsavedChanges: true,
+              error: null
+            }));
+            toast.success('AI draft generated. Click Save to create a version.');
+          },
+          onError: (data) => {
+            if (settled) return;
+            settled = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            cleanup();
+            reject(new Error(data.message || 'AI generation failed'));
+          },
+          onDone: () => {
+            if (settled) return;
+            settled = true;
+            if (timeoutId) clearTimeout(timeoutId);
+            cleanup();
+            resolve();
+          }
+        });
+
+        timeoutId = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          reject(new Error('Generation timed out'));
+        }, 600000);
       });
-
-      const resultMessage = typeof result?.msg === 'string' ? result.msg.trim() : '';
-      const generationSucceeded = result?.isSuccess !== false;
-
-      if (!generationSucceeded) {
-        const failureMessage = resultMessage || 'AI generation failed';
-        setReportState((prev) => ({
-          ...prev,
-          isGenerating: false,
-          findings: '',
-          impression: '',
-          hasUnsavedChanges: false,
-          error: failureMessage
-        }));
-        toast.error(failureMessage);
-        return;
-      }
-
-      const findings = Array.isArray(result.findings) ? result.findings.join('\n') : (result.findings || '');
-      const impression = Array.isArray(result.impression) ? result.impression.join('\n') : (result.impression || '');
-
-      setReportState((prev) => ({
-        ...prev,
-        isGenerating: false,
-        findings,
-        impression,
-        hasUnsavedChanges: true,
-        error: null
-      }));
-      toast.success('AI draft generated. Click Save to create a version.');
     } catch (error) {
-      const message = error?.response?.data?.error || 'Failed to generate AI report';
-      setReportState((prev) => ({ ...prev, isGenerating: false, error: message }));
+      const message = error?.message || error?.response?.data?.error || 'Failed to generate AI report';
+      setReportState((prev) => ({ ...prev, error: message }));
       toast.error(message);
       console.error('AI generation failed:', error);
+    } finally {
+      setReportState((prev) => ({ ...prev, isGenerating: false }));
     }
   };
 
@@ -1201,6 +1239,37 @@ const UploadViewerPage = () => {
             )}
           </div>
         </div>
+        {(generationStages[1] || generationStages[2]) && (
+          <div className="px-4 pb-2">
+            <div className="space-y-1 rounded-md border border-slate-200 bg-slate-50 px-2 py-1 text-[0.7rem] text-slate-600">
+              {[1, 2].map((stage) => {
+                const event = generationStages[stage];
+                if (!event) {
+                  return (
+                    <div key={stage} className="flex items-center gap-2 opacity-50">
+                      <Loader2 className="h-3.5 w-3.5 text-slate-400" />
+                      <span>Stage {stage} pending</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={stage} className="flex items-center gap-2">
+                    {event.status === 'running' ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-500" />
+                    ) : (
+                      <Check className="h-3.5 w-3.5 text-green-600" />
+                    )}
+                    <span className="truncate">
+                      Stage {stage} {event.status === 'running' ? 'running' : 'complete'}
+                      {generationTotal ? ` (${stage}/${generationTotal})` : ''}
+                      {event.model ? ` · ${event.model}` : ''}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
 
   <div className="flex-1 px-4 py-1.5 space-y-1.5 min-h-0">
           {selectedUpload && (

@@ -153,6 +153,28 @@ const schemas = {
         backup_frequency: Joi.string().min(1).max(255).optional()
     }),
     
+    llmPipeline: Joi.object({
+        name: Joi.string().min(1).max(255).required(),
+        priority: Joi.number().integer().min(1).optional(),
+        enabled: Joi.boolean().optional(),
+        stage1_model_name: Joi.string().required(),
+        stage1_api_url: Joi.string().uri().required(),
+        stage1_api_key: Joi.string().required(),
+        stage1_prompt: Joi.string().allow('', null).optional(),
+        stage1_max_tokens: Joi.number().integer().min(256).max(4096).optional(),
+        stage1_temperature: Joi.number().min(0).max(1).optional(),
+        stage1_top_p: Joi.number().min(0.1).max(1).optional(),
+        stage1_include_image: Joi.boolean().optional(),
+        stage2_model_name: Joi.string().required(),
+        stage2_api_url: Joi.string().uri().required(),
+        stage2_api_key: Joi.string().required(),
+        stage2_prompt: Joi.string().allow('', null).optional(),
+        stage2_max_tokens: Joi.number().integer().min(256).max(4096).optional(),
+        stage2_temperature: Joi.number().min(0).max(1).optional(),
+        stage2_top_p: Joi.number().min(0.1).max(1).optional(),
+        stage2_include_image: Joi.boolean().optional()
+    }),
+
     reportSearch: Joi.object({
         patient_id: Joi.string().optional(),
         patient_name: Joi.string().optional(),
