@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
 const path = require('path');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -267,6 +268,14 @@ const cleanupEmptyDirectories = async (dirPath) => {
     }
 };
 
+const computeFileHash = (filePath) => new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = fs.createReadStream(filePath);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('error', (error) => reject(error));
+    stream.on('end', () => resolve(hash.digest('hex')));
+});
+
 const mapUploadRow = (row, req) => {
     const isDicom = row.is_dicom || false;
     const hasConvertedImage = row.converted_image_path;
@@ -364,6 +373,13 @@ router.post('/', upload.single('file'), async (req, res) => {
     let convertedImagePath = null;
     let dicomMetadata = null;
     let studyInstanceUID = null;
+    let fileHash = null;
+
+    try {
+        fileHash = await computeFileHash(absoluteUploadPath);
+    } catch (hashError) {
+        logger.warn('Failed to compute upload hash', { error: hashError.message });
+    }
 
     try {
         // Handle DICOM conversion
@@ -372,7 +388,43 @@ router.post('/', upload.single('file'), async (req, res) => {
                 const outputDir = req.file.destination;
                 const baseFileName = path.parse(req.file.filename).name;
 
-                convertedImagePath = await convertDicomToImage(absoluteUploadPath, outputDir, baseFileName);
+                if (fileHash) {
+                    try {
+                        const existing = await db.query(
+                            `SELECT converted_image_path
+                             FROM uploads
+                             WHERE hash = $1
+                               AND converted_image_path IS NOT NULL
+                               AND status = 'ready'
+                             ORDER BY updated_at DESC
+                             LIMIT 1`,
+                            [fileHash]
+                        );
+                        const existingPath = existing.rows[0]?.converted_image_path;
+                        if (existingPath) {
+                            const sourcePath = resolveUploadPath(existingPath);
+                            if (fs.existsSync(sourcePath)) {
+                                const ext = path.extname(sourcePath);
+                                const targetPath = path.join(outputDir, `${baseFileName}${ext}`);
+                                await fsp.copyFile(sourcePath, targetPath);
+                                convertedImagePath = path.relative(UPLOAD_ROOT, targetPath);
+                                logger.info('Reused existing converted DICOM image', {
+                                    uploadId,
+                                    source: existingPath,
+                                    target: convertedImagePath
+                                });
+                            }
+                        }
+                    } catch (reuseError) {
+                        if (reuseError.code !== '42703') {
+                            logger.warn('Failed to reuse converted DICOM image', { error: reuseError.message });
+                        }
+                    }
+                }
+
+                if (!convertedImagePath) {
+                    convertedImagePath = await convertDicomToImage(absoluteUploadPath, outputDir, baseFileName);
+                }
                 dicomMetadata = await getDicomMetadata(absoluteUploadPath);
 
                 // Store relative path for converted image
@@ -402,8 +454,8 @@ router.post('/', upload.single('file'), async (req, res) => {
         let insertedRow;
         try {
             const insertResult = await db.query(
-                `INSERT INTO uploads (id, user_id, stored_filename, original_filename, mime_type, file_size, modality, status, source, converted_image_path, dicom_metadata, is_dicom, study_instance_uid, updated_at)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready', 'upload', $8, $9, $10, $11, CURRENT_TIMESTAMP)
+                `INSERT INTO uploads (id, user_id, stored_filename, original_filename, mime_type, file_size, modality, status, source, hash, converted_image_path, dicom_metadata, is_dicom, study_instance_uid, updated_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'ready', 'upload', $8, $9, $10, $11, $12, CURRENT_TIMESTAMP)
                  RETURNING id, original_filename, mime_type, file_size, modality, created_at, status, thumbnail_key, converted_image_path, is_dicom, dicom_metadata, study_instance_uid`,
                 [
                     uploadId,
@@ -413,6 +465,7 @@ router.post('/', upload.single('file'), async (req, res) => {
                     mimeType,
                     req.file.size,
                     resolvedModality,
+                    fileHash,
                     convertedImagePath,
                     resolvedMetadata,
                     isDicom,
