@@ -126,8 +126,9 @@ CREATE TABLE uploads (
 );
 
 CREATE INDEX IF NOT EXISTS idx_uploads_user_id ON uploads(user_id);
-CREATE INDEX IF NOT EXISTS idx_uploads_created_at ON uploads(created_at);
 CREATE INDEX IF NOT EXISTS idx_uploads_status ON uploads(status);
+CREATE INDEX IF NOT EXISTS idx_uploads_created_at ON uploads(created_at);
+
 
 CREATE TABLE IF NOT EXISTS file_metadata (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
