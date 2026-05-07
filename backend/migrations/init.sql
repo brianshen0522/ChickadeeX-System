@@ -31,18 +31,7 @@ INSERT INTO roles (name, description) VALUES
     ('researcher', 'Can view finalized reports and export data'),
     ('observer', 'Read-only access to finalized reports');
 
--- Seed default local users (passwords must be rotated in production)
-INSERT INTO users (email, name, role_id, local_password, is_active)
-SELECT 'admin@chickadeex.com', 'System Administrator', r.id, '$2a$10$Xsm39BDwmOWjSubIbymq9ubHfzMNsaDFzCtvyFmYcPvTRlEi6y5Pm', true
-FROM roles r WHERE r.name = 'admin';
 
-INSERT INTO users (email, name, role_id, local_password, is_active)
-SELECT 'doctor@chickadeex.com', 'Doctor', r.id, '$2a$10$kCdzSc19xNRT4ATk1bVWWO0B1VP5fpaf.CWqZeka6fQ4irpbqf0bO', true
-FROM roles r WHERE r.name = 'doctor';
-
-INSERT INTO users (email, name, role_id, local_password, is_active)
-SELECT 'user@chickadeex.com', 'Test User', r.id, '$2a$10$zCgKAdlv12kP0/cDGGoRt.XyricrN2Nown5NITTU7L1237uASEUcm', true
-FROM roles r WHERE r.name = 'observer';
 
 -- Create users table
 CREATE TABLE users (
@@ -58,6 +47,19 @@ CREATE TABLE users (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     CHECK (local_password IS NOT NULL OR keycloak_user_id IS NOT NULL)
 );
+
+-- Seed default local users (passwords must be rotated in production)
+INSERT INTO users (email, name, role_id, local_password, is_active)
+SELECT 'admin@chickadeex.com', 'System Administrator', r.id, '$2a$10$Xsm39BDwmOWjSubIbymq9ubHfzMNsaDFzCtvyFmYcPvTRlEi6y5Pm', true
+FROM roles r WHERE r.name = 'admin';
+
+INSERT INTO users (email, name, role_id, local_password, is_active)
+SELECT 'doctor@chickadeex.com', 'Doctor', r.id, '$2a$10$kCdzSc19xNRT4ATk1bVWWO0B1VP5fpaf.CWqZeka6fQ4irpbqf0bO', true
+FROM roles r WHERE r.name = 'doctor';
+
+INSERT INTO users (email, name, role_id, local_password, is_active)
+SELECT 'user@chickadeex.com', 'Test User', r.id, '$2a$10$zCgKAdlv12kP0/cDGGoRt.XyricrN2Nown5NITTU7L1237uASEUcm', true
+FROM roles r WHERE r.name = 'observer';
 
 -- Create sessions table
 CREATE TABLE sessions (
