@@ -3,6 +3,9 @@ const axios = require('axios');
 const { authenticateToken, requireAnyRole } = require('../middleware/auth');
 const { logger } = require('../utils/logger');
 const { getDB } = require('../database/connection');
+const { createAuditLog } = require('../utils/audit');
+
+const MAX_STUDIES_PER_PAGE = 1000;
 
 const router = express.Router();
 
@@ -83,8 +86,8 @@ router.get('/studies', async (req, res) => {
     }
 
     // Pagination (QIDO supports limit/offset)
-    params['limit'] = parseInt(limit);
-    params['offset'] = parseInt(offset);
+    params['limit'] = Math.min(Math.max(parseInt(limit) || 50, 1), MAX_STUDIES_PER_PAGE);
+    params['offset'] = Math.max(parseInt(offset) || 0, 0);
 
     // Build headers, including optional auth
     const headers = { Accept: 'application/dicom+json' };
@@ -222,6 +225,12 @@ router.get('/studies/:studyUID/download', async (req, res) => {
     if (!allowedFormats.includes(format)) {
       return res.status(400).json({ error: 'Unsupported format requested' });
     }
+    await createAuditLog(req.user.id, 'study_downloaded', 'study', null, {
+      study_instance_uid: studyUID,
+      format,
+      ip: req.ip,
+      user_agent: req.get('User-Agent')
+    });
     // Resolve PACS URL from settings
     const db = getDB();
     const cfg = await db.query('SELECT pacs_url, auth_type, credentials, query_timeout FROM pacs_config LIMIT 1');

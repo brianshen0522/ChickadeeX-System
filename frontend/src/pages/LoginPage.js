@@ -56,7 +56,8 @@ const LoginPage = () => {
     }
 
     const scope = encodeURIComponent('openid email profile');
-    const authUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&prompt=select_account&state=${encodeURIComponent(state)}`;
+    // App logout leaves the Keycloak session open, so always ask for credentials
+    const authUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&prompt=login&state=${encodeURIComponent(state)}`;
     window.location.href = authUrl;
   };
 

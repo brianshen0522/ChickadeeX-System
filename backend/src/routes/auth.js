@@ -34,8 +34,16 @@ const isValidSsoState = (expected, received) => {
 const isLinkedToOtherSubject = (user, kcSub) =>
     Boolean(user.keycloak_user_id) && user.keycloak_user_id !== kcSub;
 
+// A cross-site page cannot send JSON without a CORS preflight, so this stops forged logins
+const requireJsonBody = (req, res, next) => {
+    if (!req.is('application/json')) {
+        return res.status(415).json({ error: 'Content-Type must be application/json' });
+    }
+    next();
+};
+
 // Local login
-router.post('/login', validateRequest(schemas.login), async (req, res) => {
+router.post('/login', requireJsonBody, validateRequest(schemas.login), async (req, res) => {
     try {
         const { email, password } = req.body;
         const db = getDB();
@@ -147,11 +155,11 @@ router.post('/login', validateRequest(schemas.login), async (req, res) => {
 });
 
 // SSO callback (Keycloak)
-router.post('/sso/callback', async (req, res) => {
+router.post('/sso/callback', requireJsonBody, async (req, res) => {
     try {
         const { access_token } = req.body;
         
-        if (!access_token) {
+        if (!access_token || typeof access_token !== 'string') {
             return res.status(400).json({ error: 'Access token required' });
         }
 
@@ -167,6 +175,12 @@ router.post('/sso/callback', async (req, res) => {
                 }
             }
         );
+
+        // Keycloak vouched for the token above; it must also have been issued to this app
+        const clientId = process.env.KEYCLOAK_CLIENT_ID;
+        if (!clientId || jwt.decode(access_token)?.azp !== clientId) {
+            return res.status(401).json({ error: 'SSO authentication failed' });
+        }
 
         const userInfo = userInfoResponse.data;
         const db = getDB();

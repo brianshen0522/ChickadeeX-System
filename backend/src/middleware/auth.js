@@ -12,6 +12,18 @@ const extractToken = (req) => {
     return authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 };
 
+// Access tokens live 30 minutes, so the marker only has to outlast them
+const USER_REVOCATION_TTL_SECONDS = 1800;
+
+// Ends every token issued to a user before now, e.g. after a credential change
+const revokeUserTokens = async (userId) => {
+    await getRedis().setEx(
+        `revoked_before:${userId}`,
+        USER_REVOCATION_TTL_SECONDS,
+        String(Math.floor(Date.now() / 1000))
+    );
+};
+
 const authenticateToken = async (req, res, next) => {
     try {
         const token = extractToken(req);
@@ -29,7 +41,12 @@ const authenticateToken = async (req, res, next) => {
 
         // Verify JWT token
         const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
-        
+
+        const revokedBefore = await redis.get(`revoked_before:${decoded.userId}`);
+        if (revokedBefore && decoded.iat < Number(revokedBefore)) {
+            return res.status(401).json({ error: 'Token has been revoked' });
+        }
+
         // Get user from database
         const db = getDB();
         const userQuery = `
@@ -133,6 +150,7 @@ const checkReportAccess = async (req, res, next) => {
 
 module.exports = {
     extractToken,
+    revokeUserTokens,
     authenticateToken,
     requireRole,
     requireAnyRole,

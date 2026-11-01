@@ -29,7 +29,7 @@ router.get('/llm-configs',
         try {
             const db = getDB();
             const query = `
-                SELECT id, name, model_name, api_url, priority, enabled, max_tokens, temperature, top_p,
+                SELECT id, name, model_name, priority, enabled, max_tokens, temperature, top_p,
                        (api_key IS NOT NULL) AS has_api_key
                 FROM llm_configs
                 WHERE enabled = true
@@ -326,9 +326,13 @@ router.post('/:reportId/versions',
             const versionResult = await db.query(versionQuery, [reportId]);
             const nextVersion = versionResult.rows[0].next_version;
 
+            // Locking the report row orders this write against a concurrent finalize
             const insertQuery = `
                 INSERT INTO report_versions (report_id, version_no, findings, impression, template_used)
-                VALUES ($1, $2, $3, $4, $5)
+                SELECT r.id, $2::int, $3::text, $4::text, $5::varchar
+                FROM reports r
+                WHERE r.id = $1 AND r.finalized_at IS NULL
+                FOR UPDATE
                 RETURNING *
             `;
             
@@ -339,6 +343,10 @@ router.post('/:reportId/versions',
                 impression,
                 template_used || null
             ]);
+
+            if (result.rows.length === 0) {
+                return res.status(400).json({ error: 'Cannot edit a finalized report' });
+            }
 
             await createAuditLog(req.user.id, 'report_version_created', 'report', reportId, {
                 version_no: nextVersion,
@@ -492,10 +500,13 @@ router.post('/:reportId/generate',
             const versionResult = await db.query(versionQuery, [reportId]);
             const nextVersion = versionResult.rows[0].next_version;
 
-            // Save as new version
+            // Save as new version; the report may have been finalized while the LLM was running
             const insertQuery = `
                 INSERT INTO report_versions (report_id, version_no, findings, impression, template_used, generated_by_ai, ai_model_used)
-                VALUES ($1, $2, $3, $4, $5, true, $6)
+                SELECT r.id, $2::int, $3::text, $4::text, $5::varchar, true, $6::varchar
+                FROM reports r
+                WHERE r.id = $1 AND r.finalized_at IS NULL
+                FOR UPDATE
                 RETURNING *
             `;
             
@@ -507,6 +518,10 @@ router.post('/:reportId/generate',
                 template_used || null,
                 aiResult.model_used
             ]);
+
+            if (result.rows.length === 0) {
+                return res.status(400).json({ error: 'Cannot edit a finalized report' });
+            }
 
             await createAuditLog(req.user.id, 'ai_report_generated', 'report', reportId, {
                 version_no: nextVersion,
@@ -563,9 +578,23 @@ router.put('/:reportId/versions/latest',
             if (findings !== undefined) { c++; updates.push(`findings = $${c}`); values.push(findings); }
             if (impression !== undefined) { c++; updates.push(`impression = $${c}`); values.push(impression); }
             c++; values.push(latest.id);
+            c++; values.push(reportId);
 
-            const q = `UPDATE report_versions SET ${updates.join(', ')}, created_at = created_at WHERE id = $${c} RETURNING *`;
+            const q = `
+                WITH open_report AS (
+                    SELECT id FROM reports WHERE id = $${c} AND finalized_at IS NULL FOR UPDATE
+                )
+                UPDATE report_versions
+                SET ${updates.join(', ')}, created_at = report_versions.created_at
+                FROM open_report
+                WHERE report_versions.id = $${c - 1}
+                RETURNING report_versions.*
+            `;
             const upd = await db.query(q, values);
+
+            if (upd.rows.length === 0) {
+                return res.status(400).json({ error: 'Cannot edit a finalized report' });
+            }
 
             await createAuditLog(req.user.id, 'report_version_updated', 'report', reportId, {
                 version_no: latest.version_no,
@@ -608,11 +637,15 @@ router.put('/:reportId/description',
             const updateQuery = `
                 UPDATE reports 
                 SET study_description = $1, updated_at = CURRENT_TIMESTAMP 
-                WHERE id = $2
+                WHERE id = $2 AND finalized_at IS NULL
                 RETURNING *
             `;
             
             const result = await db.query(updateQuery, [study_description, reportId]);
+
+            if (result.rows.length === 0) {
+                return res.status(400).json({ error: 'Cannot edit a finalized report' });
+            }
 
             await createAuditLog(req.user.id, 'report_description_updated', 'report', reportId, {
                 study_description,
@@ -663,11 +696,15 @@ router.post('/:reportId/finalize',
             const updateQuery = `
                 UPDATE reports 
                 SET finalized_at = CURRENT_TIMESTAMP 
-                WHERE id = $1
+                WHERE id = $1 AND finalized_at IS NULL
                 RETURNING *
             `;
             
             const result = await db.query(updateQuery, [reportId]);
+
+            if (result.rows.length === 0) {
+                return res.status(400).json({ error: 'Report is already finalized' });
+            }
 
             await createAuditLog(req.user.id, 'report_finalized', 'report', reportId, {
                 ip: req.ip,

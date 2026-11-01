@@ -9,11 +9,11 @@ jest.mock('../src/utils/logger', () => ({
 jest.mock('../src/utils/audit', () => ({ createAuditLog: jest.fn() }));
 jest.mock('../src/services/llm', () => ({ callLLM: jest.fn() }));
 jest.mock('../src/database/connection', () => ({ getDB: jest.fn() }));
-jest.mock('../src/database/redis', () => ({
-    getRedis: () => ({ get: jest.fn().mockResolvedValue(null) })
-}));
+const mockRedis = { get: jest.fn().mockResolvedValue(null), setEx: jest.fn().mockResolvedValue('OK') };
+jest.mock('../src/database/redis', () => ({ getRedis: () => mockRedis }));
 
 const { getDB } = require('../src/database/connection');
+const { createAuditLog } = require('../src/utils/audit');
 const dicomRoutes = require('../src/routes/dicom');
 const adminRoutes = require('../src/routes/admin');
 
@@ -50,6 +50,22 @@ describe('study download', () => {
         await request(app).get('/api/dicom/studies/1.2.840.113619.2/download').set('Cookie', cookie).expect(200);
 
         expect(axios.get.mock.calls[0][0]).toBe('http://pacs.test/dicom-web/studies/1.2.840.113619.2');
+        expect(createAuditLog).toHaveBeenCalledWith(
+            doctor.id,
+            'study_downloaded',
+            'study',
+            null,
+            expect.objectContaining({ study_instance_uid: '1.2.840.113619.2', format: 'zip' })
+        );
+    });
+
+    test('caps the study page size', async () => {
+        axios.get.mockResolvedValue({ data: [] });
+
+        const res = await request(app).get('/api/dicom/studies?limit=999999').set('Cookie', cookie).expect(200);
+
+        expect(res.body.limit).toBe(1000);
+        expect(axios.get.mock.calls[0][1].params.limit).toBe(1000);
     });
 });
 
@@ -118,6 +134,40 @@ describe('admin outbound configuration', () => {
             .set('Cookie', cookie)
             .send({ pacs_url: pacsUrl, auth_type: 'none' })
             .expect(400);
+    });
+
+    test('moving an LLM to another host requires its key again', async () => {
+        const url = `/api/admin/llm-configs/${targetId}`;
+        const query = jest.fn(async () => ({ rows: [stored[0]] }));
+        getDB.mockReturnValue({ query: queryAs(admin, query) });
+
+        await request(app).put(url).set('Cookie', cookie).send({ api_url: 'http://elsewhere.test/v1' }).expect(400);
+        expect(query.mock.calls.some(([sql]) => /UPDATE llm_configs/.test(sql))).toBe(false);
+
+        await request(app)
+            .put(url)
+            .set('Cookie', cookie)
+            .send({ api_url: 'http://elsewhere.test/v1', api_key: 'new-key' })
+            .expect(200);
+        await request(app)
+            .put(url)
+            .set('Cookie', cookie)
+            .send({ api_url: 'http://llm-a.test/v2/chat/completions' })
+            .expect(200);
+    });
+
+    test('an admin password reset ends the target user sessions', async () => {
+        const query = jest.fn(async () => ({ rows: [{ id: targetId, role: 'doctor' }] }));
+        getDB.mockReturnValue({ query: queryAs(admin, query) });
+
+        await request(app)
+            .put(`/api/admin/users/${targetId}`)
+            .set('Cookie', cookie)
+            .send({ password: 'new-password' })
+            .expect(200);
+
+        expect(mockRedis.setEx).toHaveBeenCalledWith(`revoked_before:${targetId}`, 1800, expect.any(String));
+        expect(query).toHaveBeenCalledWith('DELETE FROM sessions WHERE user_id = $1', [targetId]);
     });
 
     test('rejects a non-HTTP LLM URL on update and keeps other fields optional', async () => {

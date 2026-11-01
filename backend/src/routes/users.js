@@ -1,7 +1,9 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const { v4: uuidv4 } = require('uuid');
 const { getDB } = require('../database/connection');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, revokeUserTokens } = require('../middleware/auth');
 const { validateRequest, schemas } = require('../middleware/validation');
 const { createAuditLog } = require('../utils/audit');
 const router = express.Router();
@@ -55,8 +57,34 @@ router.put('/password', validateRequest(schemas.updatePassword), async (req, res
             }
         }
 
-        const hashed = await bcrypt.hash(new_password, 10);
+        const hashed = await bcrypt.hash(new_password, 12);
         await db.query('UPDATE users SET local_password = $1 WHERE id = $2', [hashed, req.user.id]);
+
+        // Sign out every other session; this one continues on a fresh token
+        await revokeUserTokens(req.user.id);
+        await db.query('DELETE FROM sessions WHERE user_id = $1', [req.user.id]);
+        const token = jwt.sign(
+            { userId: req.user.id, email: req.user.email, role: req.user.role },
+            process.env.JWT_SECRET,
+            { expiresIn: '30m' }
+        );
+        await db.query(`
+            INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent)
+            VALUES ($1, $2, $3, $4, $5, $6)
+        `, [
+            uuidv4(),
+            req.user.id,
+            token,
+            new Date(Date.now() + 30 * 60 * 1000),
+            req.ip,
+            req.get('User-Agent')
+        ]);
+        res.cookie('auth_token', token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 30 * 60 * 1000
+        });
 
         await createAuditLog(req.user.id, 'password_updated', 'user', req.user.id, { method: user.local_password ? 'change' : 'set' });
 

@@ -2,7 +2,7 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { getDB } = require('../database/connection');
 const { logger } = require('../utils/logger');
-const { authenticateToken, requireRole } = require('../middleware/auth');
+const { authenticateToken, requireRole, revokeUserTokens } = require('../middleware/auth');
 const { validateRequest, validateParams, schemas } = require('../middleware/validation');
 const { createAuditLog } = require('../utils/audit');
 const { callLLM } = require('../services/llm');
@@ -144,6 +144,11 @@ router.put('/users/:userId',
                 return res.status(404).json({ error: 'User not found' });
             }
 
+            if (password) {
+                await revokeUserTokens(userId);
+                await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
+            }
+
             await createAuditLog(req.user.id, 'user_updated', 'user', userId, {
                 updates: Object.keys(req.body),
                 ip: req.ip,
@@ -259,6 +264,9 @@ router.delete('/users/:userId/password',
             if (result.rows.length === 0) {
                 return res.status(404).json({ error: 'User not found' });
             }
+
+            await revokeUserTokens(userId);
+            await db.query('DELETE FROM sessions WHERE user_id = $1', [userId]);
 
             await createAuditLog(req.user.id, 'user_password_cleared', 'user', userId, {
                 ip: req.ip,
@@ -447,7 +455,15 @@ router.put('/llm-configs/:configId',
         try {
             const { configId } = req.params;
             const db = getDB();
-            
+
+            // A stored key stays with its host; moving hosts needs the key re-entered
+            if (req.body.api_url !== undefined && !req.body.api_key) {
+                const current = await db.query('SELECT api_url FROM llm_configs WHERE id = $1', [configId]);
+                if (current.rows.length > 0 && httpUrlHost(current.rows[0].api_url) !== httpUrlHost(req.body.api_url)) {
+                    return res.status(400).json({ error: 'api_key is required when api_url moves to a different host' });
+                }
+            }
+
             const updates = [];
             const values = [];
             let paramCount = 0;

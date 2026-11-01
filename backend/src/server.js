@@ -75,6 +75,12 @@ app.get('/health', (req, res) => {
     });
 });
 
+// API responses can carry patient data, so browsers and proxies must not store them
+app.use('/api', (req, res, next) => {
+    res.set('Cache-Control', 'no-store');
+    next();
+});
+
 // API routes
 // Auth routes (no per-IP auth-specific rate limit to avoid blocking logins)
 app.use('/api/auth', authRoutes);
