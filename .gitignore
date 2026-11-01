@@ -19,6 +19,10 @@ logs/
 .env.*
 !.env.example
 
+# Runtime nginx data (private key is generated on first start)
+nginx_config/keys/
+nginx_config/log/
+
 # OS / Editor junk
 .DS_Store
 Thumbs.db
