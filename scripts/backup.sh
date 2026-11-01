@@ -5,6 +5,9 @@
 
 set -e
 
+# Dumps hold patient data; keep them readable by the backup user only
+umask 077
+
 # Configuration
 BACKUP_DIR="/backups"
 DB_HOST="db"

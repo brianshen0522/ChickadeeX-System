@@ -1,6 +1,7 @@
 {
   "name": "medical-reports-backend",
   "version": "1.0.0",
+  "private": true,
   "description": "Backend API for AI-assisted medical reporting platform",
   "main": "src/server.js",
   "scripts": {

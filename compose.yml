@@ -96,6 +96,10 @@ services:
       KEYCLOAK_CLIENT_ID: medical-reports-client
       KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?Set KEYCLOAK_CLIENT_SECRET in .env}
       CORS_ORIGIN: http://localhost:3001
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "3000:3000"
     networks:
@@ -119,6 +123,10 @@ services:
         REACT_APP_KEYCLOAK_URL: http://localhost:8080
         REACT_APP_KEYCLOAK_REALM: medical-reports
         REACT_APP_KEYCLOAK_CLIENT_ID: medical-reports-client
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     ports:
       - "3001:80"
     networks:
