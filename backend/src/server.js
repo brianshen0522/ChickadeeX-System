@@ -71,9 +71,7 @@ app.use((req, res, next) => {
 app.get('/health', (req, res) => {
     res.status(200).json({ 
         status: 'healthy',
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime(),
-        memory: process.memoryUsage()
+        timestamp: new Date().toISOString()
     });
 });
 
@@ -112,6 +110,10 @@ process.on('SIGINT', async () => {
 // Start server
 async function startServer() {
     try {
+        if (/^(change-me|your-super-secret)/.test(process.env.JWT_SECRET || '')) {
+            logger.warn('JWT_SECRET is still a public example value; set a unique random value');
+        }
+
         // Connect to database
         await connectDB();
         logger.info('Database connected successfully');

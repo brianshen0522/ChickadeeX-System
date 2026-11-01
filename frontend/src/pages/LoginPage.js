@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { useAuth } from '../contexts/AuthContext';
+import { getSSOState } from '../services/authService';
 import { Heart, Shield, Activity, Lock, Stethoscope } from 'lucide-react';
 import { FaGoogle } from 'react-icons/fa';
 import toast from 'react-hot-toast';
@@ -33,7 +34,7 @@ const LoginPage = () => {
     }
   };
 
-  const handleKeycloakLogin = () => {
+  const handleKeycloakLogin = async () => {
     // Build Keycloak authorization URL using env vars with safe fallbacks for local dev
     const keycloakUrl = process.env.REACT_APP_KEYCLOAK_URL || 'http://localhost:8080';
     const realm = process.env.REACT_APP_KEYCLOAK_REALM || 'medical-reports';
@@ -46,8 +47,16 @@ const LoginPage = () => {
       return;
     }
 
+    let state;
+    try {
+      state = await getSSOState();
+    } catch (error) {
+      console.error('SSO state request failed:', error);
+      return;
+    }
+
     const scope = encodeURIComponent('openid email profile');
-    const authUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&prompt=select_account`;
+    const authUrl = `${keycloakUrl}/realms/${realm}/protocol/openid-connect/auth?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${scope}&prompt=select_account&state=${encodeURIComponent(state)}`;
     window.location.href = authUrl;
   };
 

@@ -3,15 +3,18 @@ const { getDB } = require('../database/connection');
 const { getRedis } = require('../database/redis');
 const { logger } = require('../utils/logger');
 
+// Check for token in httpOnly cookie first, then fallback to Authorization header
+const extractToken = (req) => {
+    if (req.cookies?.auth_token) {
+        return req.cookies.auth_token;
+    }
+    const authHeader = req.headers['authorization'];
+    return authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
+};
+
 const authenticateToken = async (req, res, next) => {
     try {
-        // Check for token in httpOnly cookie first, then fallback to Authorization header
-        let token = req.cookies?.auth_token;
-        
-        if (!token) {
-            const authHeader = req.headers['authorization'];
-            token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
-        }
+        const token = extractToken(req);
 
         if (!token) {
             return res.status(401).json({ error: 'Access token required' });
@@ -25,7 +28,7 @@ const authenticateToken = async (req, res, next) => {
         }
 
         // Verify JWT token
-        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        const decoded = jwt.verify(token, process.env.JWT_SECRET, { algorithms: ['HS256'] });
         
         // Get user from database
         const db = getDB();
@@ -129,6 +132,7 @@ const checkReportAccess = async (req, res, next) => {
 };
 
 module.exports = {
+    extractToken,
     authenticateToken,
     requireRole,
     requireAnyRole,

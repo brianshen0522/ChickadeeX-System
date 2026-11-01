@@ -2,16 +2,37 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
 
 const { getDB } = require('../database/connection');
 const { getRedis } = require('../database/redis');
 const { logger } = require('../utils/logger');
-const { authenticateToken } = require('../middleware/auth');
+const { authenticateToken, extractToken } = require('../middleware/auth');
 const { validateRequest, schemas } = require('../middleware/validation');
 const { createAuditLog } = require('../utils/audit');
 
 const router = express.Router();
+
+const SSO_STATE_COOKIE = 'sso_state';
+const SSO_STATE_COOKIE_OPTIONS = {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'lax', // must survive the top-level redirect back from Keycloak
+    path: '/api/auth/sso'
+};
+const SSO_STATE_TTL_MS = 10 * 60 * 1000;
+
+const isValidSsoState = (expected, received) => {
+    if (typeof expected !== 'string' || typeof received !== 'string') return false;
+    const a = Buffer.from(expected);
+    const b = Buffer.from(received);
+    return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+// An account already bound to a Keycloak subject must not be claimed by another subject
+const isLinkedToOtherSubject = (user, kcSub) =>
+    Boolean(user.keycloak_user_id) && user.keycloak_user_id !== kcSub;
 
 // Local login
 router.post('/login', validateRequest(schemas.login), async (req, res) => {
@@ -178,6 +199,15 @@ router.post('/sso/callback', async (req, res) => {
 
             if (byEmail.rows.length > 0) {
                 user = byEmail.rows[0];
+                if (isLinkedToOtherSubject(user, kcSub)) {
+                    await createAuditLog(user.id, 'login_failed', 'user', user.id, {
+                        reason: 'sso_subject_mismatch',
+                        method: 'sso',
+                        ip: req.ip,
+                        user_agent: req.get('User-Agent')
+                    });
+                    return res.status(401).json({ error: 'SSO authentication failed' });
+                }
                 try {
                     await db.query(
                         'UPDATE users SET keycloak_user_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND keycloak_user_id IS NULL',
@@ -296,9 +326,17 @@ router.post('/sso/callback', async (req, res) => {
             }
         });
     } catch (error) {
-        logger.error('SSO callback error:', error);
+        logger.error('SSO callback error:', error?.response?.data || error.message || error);
         res.status(500).json({ error: 'SSO authentication failed' });
     }
+});
+
+// Issue the anti-CSRF state value for a Keycloak authorization request
+router.get('/sso/state', (req, res) => {
+    const state = crypto.randomBytes(32).toString('hex');
+    res.cookie(SSO_STATE_COOKIE, state, { ...SSO_STATE_COOKIE_OPTIONS, maxAge: SSO_STATE_TTL_MS });
+    res.set('Cache-Control', 'no-store');
+    res.json({ state });
 });
 
 // SSO redirect handler (Keycloak Authorization Code → Internal token)
@@ -308,6 +346,11 @@ router.post('/sso/callback', async (req, res) => {
 router.get('/sso/redirect', async (req, res) => {
     try {
         const { code, state } = req.query;
+        const expectedState = req.cookies?.[SSO_STATE_COOKIE];
+        res.clearCookie(SSO_STATE_COOKIE, SSO_STATE_COOKIE_OPTIONS);
+        if (!isValidSsoState(expectedState, state)) {
+            return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=invalid_state`);
+        }
         if (!code) {
             return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=missing_code`);
         }
@@ -380,6 +423,15 @@ router.get('/sso/redirect', async (req, res) => {
 
             if (byEmail.rows.length > 0) {
                 user = byEmail.rows[0];
+                if (isLinkedToOtherSubject(user, kcSub)) {
+                    await createAuditLog(user.id, 'login_failed', 'user', user.id, {
+                        reason: 'sso_subject_mismatch',
+                        method: 'sso',
+                        ip: req.ip,
+                        user_agent: req.get('User-Agent')
+                    });
+                    return res.redirect(`${process.env.CORS_ORIGIN || 'http://localhost:3001'}/login?error=sso_failed`);
+                }
                 try {
                     await db.query(
                         'UPDATE users SET keycloak_user_id = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2 AND keycloak_user_id IS NULL',
@@ -501,7 +553,7 @@ router.get('/sso/redirect', async (req, res) => {
 // Logout
 router.post('/logout', authenticateToken, async (req, res) => {
     try {
-        const token = req.headers['authorization']?.split(' ')[1];
+        const token = extractToken(req);
         const redis = getRedis();
         const db = getDB();
 
@@ -539,7 +591,7 @@ router.post('/refresh', authenticateToken, async (req, res) => {
         );
 
         // Update session
-        const oldToken = req.headers['authorization']?.split(' ')[1];
+        const oldToken = extractToken(req);
         const db = getDB();
         
         await db.query(`

@@ -207,10 +207,16 @@ const resolveFirstInstance = async ({
   return { seriesUID, sopInstanceUID };
 };
 
+// Study UIDs become a PACS URL path segment, so dot segments and separators are rejected
+const STUDY_UID_PATTERN = /^[A-Za-z0-9_-][A-Za-z0-9._-]{0,127}$/;
+
 // Download a study via WADO-RS (zip, dcm sample, or rendered png)
 router.get('/studies/:studyUID/download', async (req, res) => {
   try {
     const { studyUID } = req.params;
+    if (!STUDY_UID_PATTERN.test(studyUID)) {
+      return res.status(400).json({ error: 'Invalid study UID' });
+    }
     const format = String(req.query.format || 'zip').toLowerCase();
     const allowedFormats = ['zip', 'dcm', 'png'];
     if (!allowedFormats.includes(format)) {

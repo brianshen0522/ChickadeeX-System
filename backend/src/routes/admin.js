@@ -277,9 +277,12 @@ router.delete('/users/:userId/password',
 router.delete('/users/:userId',
     validateParams({ userId: schemas.uuid }),
     async (req, res) => {
-        const client = getDB();
         const { userId } = req.params;
+        let client;
         try {
+            // Run on one dedicated connection so BEGIN/COMMIT cover every statement
+            client = await getDB().connect();
+
             // Prevent self-deletion
             if (userId === req.user.id) {
                 return res.status(403).json({ error: 'Cannot delete your own account' });
@@ -338,9 +341,11 @@ router.delete('/users/:userId',
 
             res.json({ message: 'User deleted' });
         } catch (error) {
-            try { await client.query('ROLLBACK'); } catch (_) {}
+            try { await client?.query('ROLLBACK'); } catch (_) {}
             logger.error('Delete user error:', error);
             res.status(500).json({ error: 'Failed to delete user' });
+        } finally {
+            client?.release();
         }
     }
 );
@@ -437,6 +442,7 @@ router.post('/llm-configs',
 // Update LLM configuration
 router.put('/llm-configs/:configId',
     validateParams({ configId: schemas.uuid }),
+    validateRequest(schemas.llmConfigUpdate),
     async (req, res) => {
         try {
             const { configId } = req.params;
@@ -496,6 +502,15 @@ router.put('/llm-configs/:configId',
     }
 );
 
+const httpUrlHost = (value) => {
+    try {
+        const parsed = new URL(value);
+        return ['http:', 'https:'].includes(parsed.protocol) ? parsed.host.toLowerCase() : null;
+    } catch (_) {
+        return null;
+    }
+};
+
 // List available models for a provider using a provided API key (no storage)
 router.post('/llm-models', async (req, res) => {
     try {
@@ -504,39 +519,42 @@ router.post('/llm-models', async (req, res) => {
 
         if (!provider) return res.status(400).json({ error: 'provider is required' });
 
-        // Handle stored API key case
-        let actualApiKey = api_key;
-        if (api_key === 'USE_STORED_KEY') {
-            const db = getDB();
-            const query = 'SELECT api_key FROM llm_configs WHERE enabled = true AND api_key IS NOT NULL ORDER BY priority ASC LIMIT 1';
-            const result = await db.query(query);
-            if (result.rows.length === 0) {
-                return res.status(400).json({ error: 'No stored API key found. Please configure an LLM first.' });
-            }
-            actualApiKey = result.rows[0].api_key;
-        }
-
         let url = '';
         const headers = {};
 
         if (provider === 'gpt') {
             url = 'https://api.openai.com/v1/models';
-            if (actualApiKey) headers['Authorization'] = `Bearer ${actualApiKey}`;
         } else if (provider === 'gemini') {
             url = 'https://generativelanguage.googleapis.com/v1beta/models';
-            if (actualApiKey) headers['X-goog-api-key'] = actualApiKey;
         } else if (provider === 'claude') {
             // Use OpenRouter as OpenAI-compatible aggregator for Anthropic models
             url = 'https://openrouter.ai/api/v1/models';
-            if (actualApiKey) headers['Authorization'] = `Bearer ${actualApiKey}`;
         } else if (provider === 'other') {
             if (!endpoint) return res.status(400).json({ error: 'endpoint is required for other provider' });
             const base = String(endpoint).replace(/\/+$/, '');
             url = `${base}/models`;
-            // Optional: simple bearer if provided
-            if (actualApiKey) headers['Authorization'] = `Bearer ${actualApiKey}`;
+            if (!httpUrlHost(url)) return res.status(400).json({ error: 'endpoint must be a valid http(s) URL' });
         } else {
             return res.status(400).json({ error: 'Unsupported provider' });
+        }
+
+        // A stored API key is only ever sent to the host it was configured for
+        let actualApiKey = api_key;
+        if (api_key === 'USE_STORED_KEY') {
+            const db = getDB();
+            const query = 'SELECT api_url, api_key FROM llm_configs WHERE enabled = true AND api_key IS NOT NULL ORDER BY priority ASC';
+            const result = await db.query(query);
+            const targetHost = httpUrlHost(url);
+            const stored = result.rows.find(row => httpUrlHost(row.api_url) === targetHost);
+            if (!stored) {
+                return res.status(400).json({ error: 'No stored API key found. Please configure an LLM first.' });
+            }
+            actualApiKey = stored.api_key;
+        }
+
+        if (actualApiKey) {
+            if (provider === 'gemini') headers['X-goog-api-key'] = actualApiKey;
+            else headers['Authorization'] = `Bearer ${actualApiKey}`;
         }
 
         const resp = await axios.get(url, { headers, timeout: 10000, responseType: 'json', validateStatus: () => true });
@@ -545,8 +563,7 @@ router.post('/llm-models', async (req, res) => {
 
         if (provider === 'other') {
             if (!/application\/json/i.test(ct) || (data == null) || (typeof data !== 'object')) {
-                const sample = typeof data === 'string' ? data.slice(0, 200) : undefined;
-                return res.status(502).json({ error: 'Invalid models response: expected JSON', content_type: ct || null, sample });
+                return res.status(502).json({ error: 'Invalid models response: expected JSON', content_type: ct || null });
             }
         }
 

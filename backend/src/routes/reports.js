@@ -10,6 +10,15 @@ const { generateAIReport } = require('../services/llm');
 
 const router = express.Router();
 
+// Quote a CSV cell and stop spreadsheets from evaluating it as a formula
+const csvCell = (value) => {
+    let text = String(value ?? '');
+    if (/^[=+\-@\t\r]/.test(text)) {
+        text = `'${text}`;
+    }
+    return `"${text.replace(/"/g, '""')}"`;
+};
+
 // All routes require authentication
 router.use(authenticateToken);
 
@@ -288,11 +297,15 @@ router.post('/:reportId/versions',
             const db = getDB();
             
             // Check if report exists and user has access
-            const reportQuery = 'SELECT id, doctor_id FROM reports WHERE id = $1';
+            const reportQuery = 'SELECT id, doctor_id, finalized_at FROM reports WHERE id = $1';
             const reportResult = await db.query(reportQuery, [reportId]);
             
             if (reportResult.rows.length === 0) {
                 return res.status(404).json({ error: 'Report not found' });
+            }
+
+            if (reportResult.rows[0].finalized_at) {
+                return res.status(400).json({ error: 'Cannot edit a finalized report' });
             }
 
             // Prevent duplicate save: compare to latest version content
@@ -447,6 +460,10 @@ router.post('/:reportId/generate',
             }
 
             const report = reportResult.rows[0];
+
+            if (report.finalized_at) {
+                return res.status(400).json({ error: 'Cannot edit a finalized report' });
+            }
             
             // Build DICOM context URLs
             let dicom = { studyInstanceUID: report.study_instance_uid };
@@ -634,7 +651,7 @@ router.post('/:reportId/finalize',
                 return res.status(404).json({ error: 'Report not found' });
             }
 
-            if (checkResult.rows[0].version_count === 0) {
+            if (Number(checkResult.rows[0].version_count) === 0) {
                 return res.status(400).json({ error: 'Cannot finalize report without versions' });
             }
 
@@ -730,7 +747,7 @@ router.get('/:reportId/export',
                         reportData.finalized_at || '',
                         reportData.versions?.[reportData.versions.length - 1]?.findings || '',
                         reportData.versions?.[reportData.versions.length - 1]?.impression || ''
-                    ].join(',')
+                    ].map(csvCell).join(',')
                 ].join('\n');
                 
                 res.setHeader('Content-Type', 'text/csv');

@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const session = require('express-session');
 const RedisStore = require('connect-redis').default;
 const { getRedis } = require('../database/redis');
@@ -9,7 +10,7 @@ const createSessionConfig = () => {
             client: redisClient,
             prefix: 'medical-reports:sess:',
         }),
-        secret: process.env.SESSION_SECRET || 'your-secret-key',
+        secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
         resave: false,
         saveUninitialized: false,
         name: 'medical-reports-session',

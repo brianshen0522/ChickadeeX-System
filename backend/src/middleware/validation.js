@@ -48,6 +48,9 @@ const validateQuery = (schema) => {
     };
 };
 
+// Outbound service URLs must be plain HTTP(S)
+const httpUrl = Joi.string().uri({ scheme: ['http', 'https'] });
+
 // Common validation schemas
 const schemas = {
     uuid: Joi.string().uuid().required(),
@@ -120,7 +123,7 @@ const schemas = {
     llmConfig: Joi.object({
         name: Joi.string().min(1).max(255).optional(),
         model_name: Joi.string().required(),
-        api_url: Joi.string().uri().required(),
+        api_url: httpUrl.required(),
         api_key: Joi.string().required(), // supports "header:Key=Value" or "headers:{...}"
         prompt: Joi.string().allow('', null).optional(),
         priority: Joi.number().integer().min(1).optional(),
@@ -130,8 +133,12 @@ const schemas = {
         top_p: Joi.number().min(0.1).max(1).optional()
     }),
     
+    llmConfigUpdate: Joi.object({
+        api_url: httpUrl.optional()
+    }).unknown(true),
+    
     pacsConfig: Joi.object({
-        pacs_url: Joi.string().uri().required(),
+        pacs_url: httpUrl.required(),
         auth_type: Joi.string().valid('none', 'basic', 'token').required(),
         credentials: Joi.object().optional(),
         connection_timeout: Joi.number().integer().min(1).max(300).optional(),
@@ -139,7 +146,7 @@ const schemas = {
     }),
     
     ragConfig: Joi.object({
-        rag_url: Joi.string().uri().required(),
+        rag_url: httpUrl.required(),
         enabled: Joi.boolean().optional(),
         api_key: Joi.string().optional(),
         timeout: Joi.number().integer().min(1).max(300).optional(),

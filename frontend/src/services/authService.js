@@ -10,6 +10,11 @@ export const ssoCallback = async (accessToken) => {
   return response.data;
 };
 
+export const getSSOState = async () => {
+  const response = await api.get('/auth/sso/state');
+  return response.data.state;
+};
+
 export const logout = async () => {
   const response = await api.post('/auth/logout');
   return response.data;
