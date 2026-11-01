@@ -5,12 +5,12 @@ services:
     environment:
       POSTGRES_DB: medical_reports
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres123
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./backend/migrations/init.sql:/docker-entrypoint-initdb.d/init.sql
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     networks:
       - app-network
     healthcheck:
@@ -22,11 +22,11 @@ services:
   # Redis for session storage
   redis:
     image: redis:7-alpine
-    command: redis-server --requirepass redis123
+    command: redis-server --requirepass ${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}
     volumes:
       - redis_data:/data
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     networks:
       - app-network
     healthcheck:
@@ -40,11 +40,11 @@ services:
     image: quay.io/keycloak/keycloak:26.3.3
     environment:
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://db:5432/medical_reports
       KC_DB_USERNAME: postgres
-      KC_DB_PASSWORD: postgres123
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       KC_DB_SCHEMA: keycloak
       KC_HOSTNAME: localhost
       KC_HTTP_PORT: 8080
@@ -66,10 +66,10 @@ services:
       - keycloak
     environment:
       KEYCLOAK_ADMIN: admin
-      KEYCLOAK_ADMIN_PASSWORD: admin123
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD in .env}
       KEYCLOAK_REALM: medical-reports
       KEYCLOAK_CLIENT_ID: medical-reports-client
-      KEYCLOAK_CLIENT_SECRET: dev-secret
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?Set KEYCLOAK_CLIENT_SECRET in .env}
       FRONTEND_URL: http://localhost:3001
       BACKEND_URL: http://localhost:3000
     entrypoint: ["/bin/sh", "/opt/keycloak-config/configure-ssl.sh"]
@@ -87,13 +87,14 @@ services:
     environment:
       NODE_ENV: production
       PORT: 3000
-      DATABASE_URL: postgresql://postgres:postgres123@db:5432/medical_reports
-      REDIS_URL: redis://:redis123@redis:6379
-      JWT_SECRET: your-super-secret-jwt-key-change-in-production
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/medical_reports
+      REDIS_URL: redis://:${REDIS_PASSWORD:?Set REDIS_PASSWORD in .env}@redis:6379
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
       KEYCLOAK_URL: http://keycloak:8080
       KEYCLOAK_REALM: medical-reports
       KEYCLOAK_CLIENT_ID: medical-reports-client
-      KEYCLOAK_CLIENT_SECRET: dev-secret
+      KEYCLOAK_CLIENT_SECRET: ${KEYCLOAK_CLIENT_SECRET:?Set KEYCLOAK_CLIENT_SECRET in .env}
       CORS_ORIGIN: http://localhost:3001
     ports:
       - "3000:3000"

@@ -86,8 +86,8 @@ if /opt/keycloak/bin/kcadm.sh get realms/"$APP_REALM" >/dev/null 2>&1; then
     -s "attributes.post.logout.redirect.uris=$FRONTEND_URL/login" >/dev/null || true
 
   # Set/rotate the client secret
-  /opt/keycloak/bin/kcadm.sh update clients/"$CLIENT_INTERNAL_ID"/client-secret -r "$APP_REALM" \
-    -s value="$CLIENT_SECRET" >/dev/null && \
+  /opt/keycloak/bin/kcadm.sh update clients/"$CLIENT_INTERNAL_ID" -r "$APP_REALM" \
+    -s secret="$CLIENT_SECRET" >/dev/null && \
     echo "[keycloak-config] Client secret set for '$CLIENT_ID'." || \
     echo "[keycloak-config] Warning: failed to set client secret."
 else
